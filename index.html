@@ -201,6 +201,9 @@ input.namefield:-webkit-autofill:focus{
 .tile.right{border-color:var(--green);background:var(--ok);color:var(--green);animation:pop .3s}
 .tile.wrong{border-color:var(--red);background:var(--bad);color:var(--red);animation:shake .3s}
 .tile.gone{opacity:0;pointer-events:none;transform:scale(.7)}
+/* пустая ячейка в режиме «Подмешивание»: свободное место, куда встанет новая пара */
+.tile.slot-empty{background:transparent!important;border:1px dashed var(--line)!important;border-bottom-width:1px!important;box-shadow:none!important;color:transparent!important;cursor:default;pointer-events:none;opacity:.35;transform:none!important}
+.tile.slot-empty:active{transform:none!important}
 .tile .fb{position:absolute;top:-8px;right:-4px;font-family:'Nunito';font-weight:800;font-size:calc(15px * var(--fs,1));padding:2px 7px;border-radius:9px;pointer-events:none;z-index:4;animation:fbpop .75s ease forwards}
 .tile .fb.plus{color:#10210a;background:var(--green)}
 .tile .fb.minus{color:#2a1010;background:var(--coral)}
@@ -539,6 +542,10 @@ body{font-family:'Nunito',sans-serif;background:var(--bg)}
 .dimwrong-opts.inactive{opacity:.4;pointer-events:none}
 .dimwrong-opts .setrow{padding:11px 0}
 .dimwrong-opts .lbl{font-size:calc(14px * var(--fs,1))}
+.mix-opts{display:block;margin:0 0 0 14px;padding-left:12px;border-left:2px solid var(--line);transition:opacity .18s ease}
+.mix-opts.inactive{display:none}
+.mix-opts .setrow{padding:11px 0}
+.mix-opts .lbl{font-size:calc(14px * var(--fs,1))}
 .dw-ic{font-family:'Nunito';font-weight:800;font-size:calc(12px * var(--fs,1));line-height:1;letter-spacing:.2px}
 .dw-flame{display:flex;align-items:center;justify-content:center}
 .gest-grid.show{display:block;animation:gestIn .18s ease}
@@ -1555,6 +1562,16 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
         </div>
       </div>
       <div class="setrow">
+        <div class="setlbl"><div class="lbl">Подмешивание новых пар</div><div class="desc" id="mixDesc">—</div></div>
+        <button class="soundtoggle masterytoggle" id="mixBtn"><span class="mastery-ic"><svg class="ic"><use href="#ic-swap"/></svg></span></button>
+      </div>
+      <div class="mix-opts" id="mixOpts">
+        <div class="setrow">
+          <div class="setlbl"><div class="lbl">Пар подмешивать в раунде</div><div class="desc">сколько новых случайных пар добавляется за раунд, 5–100</div></div>
+          <div class="rounds-stepper" id="mixStep"><button id="mixUp"><svg class="chev"><use href="#ic-chevu"/></svg></button><div class="rounds-val" id="mixVal">10</div><button id="mixDown"><svg class="chev"><use href="#ic-chevd"/></svg></button></div>
+        </div>
+      </div>
+      <div class="setrow">
 
         <div class="setlbl"><div class="lbl">Раскладка колонок</div><div class="desc">Ру слева / En справа или вперемешку</div></div>
         <button class="soundtoggle colmode" id="colBtn"><span class="col-ic" id="colIc"><i></i><i></i><i></i><i></i><i></i><i></i></span></button>
@@ -2482,7 +2499,7 @@ const MIN_ROWS=3, MAX_ROWS=12;
 const RANK_MIN_ROUNDS=5, RANK_MIN_ROWS=5;
 // тумблер — производное состояние: он включён ⇔ оба степпера ≥ минимума
 // И не активен режим «Тушить при неправильном сопоставлении» (он отключает зачёт).
-function isTournament(){ return !dimWrongOn && roundsSetting>=RANK_MIN_ROUNDS && rowsSetting>=RANK_MIN_ROWS; }
+function isTournament(){ return !dimWrongOn && !mixOn && roundsSetting>=RANK_MIN_ROUNDS && rowsSetting>=RANK_MIN_ROWS; }
 // ---- режим «Тушить при неправильном сопоставлении» ----
 // При ошибке плитки гаснут и больше не приносят положительных очков.
 // По умолчанию выключен. При включении отключается турнирный (рейтинговый) зачёт.
@@ -2494,6 +2511,21 @@ let dimWrongMode = localStorage.getItem('wm2_dimwrong_mode') || 'en';
 // пересборки; баллы (веса) за это автоматически не начисляются, но жесты работают.
 let reworkOn = localStorage.getItem('wm2_rework')==='1';
 if(['en','enpair','both','pairs'].indexOf(dimWrongMode)<0) dimWrongMode='en';
+// ---- режим «Подмешивание новых пар» ----
+// Вместо того чтобы «тушить» угаданную пару и оставлять её блёклой до конца раунда,
+// на её место подмешивается НОВАЯ случайная пара из активных наборов. За раунд
+// добавляется до mixCount новых пар (5..100). Новая пара появляется в СЛУЧАЙНОЙ
+// свободной ячейке (пул свободных мест копится за счёт небольшой задержки), а не
+// обязательно там, где была отгадана предыдущая. Взаимоисключим с режимом «Тушить»
+// (при включении одного другой выключается). В этом режиме раскладка колонок всегда
+// «слева Ру / справа En» (рандом столбцов отключён), турнирный зачёт отключён.
+const MIN_MIX=5, MAX_MIX=100, MIX_STEP=5;   // сколько пар подмешивать за раунд
+const MIX_DELAY_MIN=800, MIX_DELAY_MAX=3000;  // случайная задержка (мс) перед подмешиванием
+function mixDelayMs(){ return MIX_DELAY_MIN + Math.floor(Math.random()*(MIX_DELAY_MAX-MIX_DELAY_MIN+1)); }
+let mixOn = localStorage.getItem('wm2_mix_on')==='1';
+let mixCount = Math.min(MAX_MIX, Math.max(MIN_MIX, parseInt(localStorage.getItem('wm2_mix_count')||'10',10)||10));
+// страховка от одновременно включённых взаимоисключимых режимов (миграция/ручная правка LS)
+if(mixOn && dimWrongOn){ dimWrongOn=false; try{ localStorage.setItem('wm2_dimwrong_on','0'); }catch(e){} }
 const MIN_MASTERY=1, MAX_MASTERY=50;
 let roundsSetting = Math.min(MAX_ROUNDS, Math.max(MIN_ROUNDS, parseInt(localStorage.getItem('wm2_rounds')||'10',10)||10));
 let rowsSetting = Math.min(MAX_ROWS, Math.max(MIN_ROWS, parseInt(localStorage.getItem('wm2_rows')||'10',10)||10));
@@ -2996,27 +3028,27 @@ function setRows(n){
 // ---------- Турнирный режим (зачёт в рейтинг) ----------
 function renderTournament(){
   const on=isTournament();
+  const blocker = dimWrongOn ? 'Тушить' : (mixOn ? 'Подмешивание' : '');
   const b=$('#tourBtn'); if(b){
     b.classList.toggle('on', on);
-    b.classList.toggle('off', dimWrongOn);
-    b.disabled = false;   // кнопка кликабельна всегда: клик при активном «Тушить» выключит его и включит турнир
-    b.title = dimWrongOn ? 'Нажми — режим «Тушить» выключится, турнирный зачёт включится'
-                         : (on?'Игры идут в зачёт рейтинга':'Тренировка — игры не в зачёт');
+    b.classList.toggle('off', !!blocker);
+    b.disabled = false;   // кнопка кликабельна всегда: клик при активном «Тушить»/«Подмешивании» выключит его и включит турнир
+    b.title = blocker ? ('Нажми — режим «'+blocker+'» выключится, турнирный зачёт включится')
+                      : (on?'Игры идут в зачёт рейтинга':'Тренировка — игры не в зачёт');
   }
-  const d=$('#tourDesc'); if(d) d.textContent = dimWrongOn
-    ? 'Отключён: активен режим «Тушить при неправильном сопоставлении». Нажми тумблер — «Тушить» выключится и включится турнирный зачёт.'
+  const d=$('#tourDesc'); if(d) d.textContent = blocker
+    ? ('Отключён: активен режим «'+blocker+'». Нажми тумблер — он выключится и включится турнирный зачёт.')
     : on
       ? 'Игры идут в зачёт рейтинга. Нужно минимум 5 раундов и 5 слов/фраз в раунде.'
       : 'Турнирный режим отключён. Игры в зачёт не идут. Игра в режиме тренировки.';
 }
 function toggleTournament(){
-  if(dimWrongOn){
-    // включаем турнир поверх режима «Тушить»: сначала выключаем «Тушить»
-    // (со всеми подрежимами — они деактивируются вместе с главным тумблером),
-    // затем подтягиваем степперы до турнирного минимума.
-    dimWrongOn=false;
-    localStorage.setItem('wm2_dimwrong_on','0');
-    renderDimWrong();
+  // Если активен взаимоисключимый с турниром режим («Подмешивание» или «Тушить»),
+  // клик по тумблеру выключает ЕГО (со всеми подрежимами) и включает турнирный зачёт,
+  // подтягивая степперы до турнирного минимума. Это приоритетнее обычного вкл/выкл.
+  if(mixOn || dimWrongOn){
+    if(mixOn){ mixOn=false; localStorage.setItem('wm2_mix_on','0'); renderMix(); renderCol(); }
+    if(dimWrongOn){ dimWrongOn=false; localStorage.setItem('wm2_dimwrong_on','0'); renderDimWrong(); }
     if(roundsSetting<RANK_MIN_ROUNDS) setRounds(RANK_MIN_ROUNDS);
     if(rowsSetting<RANK_MIN_ROWS) setRows(RANK_MIN_ROWS);
     renderTournament();
@@ -3062,8 +3094,11 @@ function toggleRework(){
 function toggleDimWrong(){
   dimWrongOn=!dimWrongOn;
   localStorage.setItem('wm2_dimwrong_on', dimWrongOn?'1':'0');
+  // взаимоисключимо с «Подмешиванием»: включили «Тушить» → выключаем подмешивание
+  if(dimWrongOn && mixOn){ mixOn=false; localStorage.setItem('wm2_mix_on','0'); if(typeof renderMix==='function') renderMix(); }
   renderDimWrong();
   renderTournament();   // турнирный режим зависит от этого тумблера
+  if(typeof renderCol==='function') renderCol();
 }
 function setDimWrongMode(m){
   if(['en','enpair','both','pairs'].indexOf(m)<0) m='en';
@@ -3073,12 +3108,57 @@ function setDimWrongMode(m){
 }
 function renderCol(){
   const ic=$('#colIc'); if(ic){ ic.classList.toggle('split',colMode==='split'); ic.classList.toggle('mix',colMode==='mix'); }
-  const b=$('#colBtn'); if(b){ b.classList.toggle('on',colMode==='split'); b.title = colMode==='split' ? 'Колонки: слева Ру, справа En (нажми — вперемешку)' : 'Колонки: вперемешку (нажми — Ру|En)'; }
+  const b=$('#colBtn'); if(b){
+    b.classList.toggle('on',colMode==='split');
+    b.disabled = false;
+    b.style.opacity = '';
+    b.title = colMode==='split' ? 'Колонки: слева Ру, справа En (нажми — вперемешку)'
+            : 'Колонки: вперемешку (нажми — Ру|En)';
+  }
 }
 function toggleCol(){
+  // Раскладка колонок и «Подмешивание» несовместимы: смена раскладки выключает
+  // подмешивание и включает выбранную раскладку.
+  if(mixOn){ mixOn=false; localStorage.setItem('wm2_mix_on','0'); renderMix(); renderTournament(); }
   colMode = colMode==='split' ? 'mix' : 'split';
   localStorage.setItem('wm2_col', colMode);
   renderCol();
+}
+// ---------- Режим «Подмешивание новых пар» ----------
+function renderMix(){
+  const b=$('#mixBtn'); if(b){
+    b.classList.toggle('on', mixOn);
+    b.title = mixOn ? 'Включено: угаданная пара заменяется новой случайной парой'
+                    : 'Выключено';
+  }
+  const d=$('#mixDesc'); if(d) d.textContent = mixOn
+    ? 'Угаданная пара не тушится, а заменяется новой случайной парой из активных наборов (до '+mixCount+' за раунд), появляясь в свободной ячейке. Колонки зафиксированы: Ру слева, En справа. Режим «Тушить» и турнирный зачёт отключены.'
+    : 'Вместо тушения угаданной пары подмешивается новая случайная пара из активных наборов. Взаимоисключимо с режимом «Тушить».';
+  const v=$('#mixVal'); if(v) v.textContent=mixCount;
+  const up=$('#mixUp'), dn=$('#mixDown');
+  if(up) up.disabled = !mixOn || mixCount>=MAX_MIX;
+  if(dn) dn.disabled = !mixOn || mixCount<=MIN_MIX;
+  const opts=$('#mixOpts'); if(opts) opts.classList.toggle('inactive', !mixOn);
+}
+function toggleMix(){
+  mixOn=!mixOn;
+  localStorage.setItem('wm2_mix_on', mixOn?'1':'0');
+  if(mixOn){
+    // взаимоисключимо с «Тушить»: выключаем его со всеми подрежимами и «работой над ошибками»
+    if(dimWrongOn){ dimWrongOn=false; localStorage.setItem('wm2_dimwrong_on','0'); }
+    if(reworkOn){ reworkOn=false; localStorage.setItem('wm2_rework','0'); }
+    // фиксируем раскладку колонок: слева Ру, справа En
+    if(colMode!=='split'){ colMode='split'; localStorage.setItem('wm2_col','split'); }
+  }
+  renderMix();
+  renderDimWrong();
+  renderTournament();
+  renderCol();
+}
+function setMixCount(n){
+  mixCount=Math.min(MAX_MIX, Math.max(MIN_MIX, Math.round(n/MIX_STEP)*MIX_STEP));
+  localStorage.setItem('wm2_mix_count', String(mixCount));
+  renderMix();
 }
 // порог «выучено»: слова с весом >= порога не участвуют в раундах (если включено)
 function renderMastery(){
@@ -3413,6 +3493,7 @@ function goBack(){ try{ history.back(); }catch(e){ navReplace(user?'home':'name'
 window.addEventListener('popstate', e=>{
   const s=(e.state&&e.state.s) || (user?'home':'name');
   if(g&&g.timerId) clearInterval(g.timerId);
+  if(g&&g.mixTimer){ clearTimeout(g.mixTimer); g.mixTimer=null; }
   show(s);
   if(s==='home') refreshHome();
 });
@@ -3808,8 +3889,19 @@ function startGame(replace){
     return;
   }
   const entries=arrangeRounds(selectGameEntries(pairs), rows);
-  g={ entries, rounds, rows, pairs, col:colMode, round:0, matched:0, totalMatched:0, totalResolved:0, mistakes:0,
-      delta:{}, correct:{}, wrong:{}, gCorrect:{}, gWrong:{}, dimWrong:dimWrongOn, dimWrongMode:dimWrongMode, rework:reworkOn, sel:null, busy:false, t0:performance.now(), timerId:null };
+  // режим «Подмешивание»: за раунд подмешиваем до mixCount новых пар (но не больше,
+  // чем есть свободных слов в активных наборах сверх видимого окна). Знаменатель
+  // прогресса (g.pairs) увеличиваем на подмешиваемые пары.
+  const useMix = mixOn && mode!=='phrases';
+  let mixPer=0, gpairs=pairs;
+  if(useMix){
+    mixPer = Math.min(mixCount, Math.max(0, enabledIndices().length - rows));
+    gpairs = rounds*(rows + mixPer);
+  }
+  g={ entries, rounds, rows, pairs:gpairs, col: useMix?'split':colMode, round:0, matched:0, totalMatched:0, totalResolved:0, mistakes:0,
+      delta:{}, correct:{}, wrong:{}, gCorrect:{}, gWrong:{}, dimWrong: useMix?false:dimWrongOn, dimWrongMode:dimWrongMode, rework: useMix?false:reworkOn,
+      mixOn:useMix, mixPer, mixLeft:0, mixActive:null, roundIdxs:null, pool:null, mixTimer:null,
+      sel:null, busy:false, t0:performance.now(), timerId:null };
   startTimer();
   (replace?navReplace:navPush)('game');
   loadRound();
@@ -3858,6 +3950,7 @@ function makeTile(t){
 }
 function loadRound(){
   if(g.isPhrase) return loadPhraseRound();
+  if(g.mixOn) return loadRoundMix();
   setRoundLabel('');
   const rows=g.rows;
   const slice=g.entries.slice(g.round*rows,(g.round+1)*rows);
@@ -3911,6 +4004,132 @@ function loadPhraseRound(){
   }
   updateProgress();
 }
+// ---------- Режим «Подмешивание новых пар» ----------
+// Раунд загружается видимым окном из g.rows пар (как обычно, но раскладка ВСЕГДА
+// split: слева Ру, справа En). Каждая угаданная пара не тушится, а освобождает
+// две ячейки; с задержкой в эти (и накопленные) свободные ячейки подмешиваются
+// новые случайные пары из активных наборов — до g.mixPer штук за раунд. Учёт весов
+// и статистики идёт по ИНДЕКСУ слова (dataset.idx), поэтому позиция ячейки роли не
+// играет: и для тапа, и для жестов веса берётся текущий idx ячейки.
+function loadRoundMix(){
+  setRoundLabel('');
+  const rows=g.rows;
+  const slice=g.entries.slice(g.round*rows,(g.round+1)*rows);
+  g.cur=slice; g.matched=0; g.sel=null; g.busy=false; g.committed=false; g.roundT0=performance.now(); g.closed=new Set();
+  g.delta={}; g.correct={}; g.wrong={};
+  g.inRework=false; showReworkBanner(false);
+  if(g.mixTimer){ clearTimeout(g.mixTimer); g.mixTimer=null; }
+  const enabled=enabledIndices();
+  // сколько ещё пар можно подмешать в этот раунд (не больше, чем есть слов сверх окна)
+  g.mixLeft = Math.min(g.mixPer, Math.max(0, enabled.length - slice.length));
+  g.mixActive = new Set(slice);                 // idx, что сейчас на доске и не решены
+  g.roundIdxs = new Set(slice);                 // все idx, показанные в этом раунде (для seen/дней)
+  g.pool = shuffle(enabled);                    // случайный порядок кандидатов на подмешивание
+  $('#rNum').textContent=g.round+1;
+  $('#rTotal').textContent=g.rounds;
+  $('#pTotal').textContent=g.pairs;
+  const board=$('#board'); board.innerHTML='';
+  board.classList.toggle('show-ipa', ipaOn);
+  const en=slice.map(idx=>({idx,side:'L',txt:enOf(idx)}));
+  const ru=slice.map(idx=>({idx,side:'R',txt:transOf(idx)}));
+  // ВСЕГДА split: левая колонка — русские (side R), правая — английские (side L);
+  // рандом столбцов в этом режиме отключён
+  board.classList.add('split');
+  board.style.gridTemplateRows='repeat('+slice.length+',auto)';
+  [...shuffle(ru), ...shuffle(en)].forEach(t=>board.appendChild(makeTile(t)));
+  updateProgress();
+}
+// взять кандидата на подмешивание: любой idx из активных наборов, которого сейчас
+// нет на доске и который ещё не решён в этом раунде (чтобы idx не появлялся дважды)
+function drawMixCandidate(){
+  if(!g.pool) return -1;
+  while(g.pool.length){
+    const c=g.pool.pop();
+    if(g.mixActive && g.mixActive.has(c)) continue;   // уже на доске
+    if(g.closed && g.closed.has(c)) continue;         // уже решён в этом раунде
+    return c;
+  }
+  return -1;
+}
+// превратить плитку в пустую ячейку (свободное место под будущую пару)
+function emptySlot(tile){
+  if(!tile) return;
+  tile.classList.remove('sel','right','wrong','done','burnt','revealed','rework','aud','fade');
+  tile.classList.add('slot-empty');
+  tile.removeAttribute('data-idx');
+  tile.dataset.aud='';
+  const x=tile.querySelector('.burn-x'); if(x) x.remove();
+  tile.innerHTML='';
+}
+// заполнить свободную ячейку новой парой (idx), сохранив сторону/колонку ячейки
+function fillSlot(tile, idx){
+  if(!tile) return;
+  const side = tile.classList.contains('en') ? 'L' : 'R';
+  tile.classList.remove('slot-empty','done','burnt','right','wrong','sel','revealed','rework','aud');
+  tile.dataset.idx=idx; tile.dataset.side=side; tile.dataset.aud='';
+  const isAud = (audMode==='ru' && side==='L') || (audMode==='en' && side==='R');
+  if(isAud){
+    tile.classList.add('aud'); tile.dataset.aud='1';
+    tile.innerHTML='<span class="audic" aria-hidden="true">'+audicBars(idx)+'</span>';
+  } else if(side==='L'){
+    const ipa=ipaOf(idx);
+    tile.innerHTML='<span class="w"></span>'+(ipa?'<span class="ipa"></span>':'');
+    tile.querySelector('.w').textContent=enOf(idx);
+    if(ipa) tile.querySelector('.ipa').textContent=ipa;
+  } else {
+    tile.textContent=transOf(idx);
+  }
+  tile.classList.remove('fade'); void tile.offsetWidth; tile.classList.add('fade');  // мягкое появление
+}
+// угаданная пара в режиме «Подмешивание»: не тушим, а освобождаем ячейки и
+// планируем подмешивание новой пары
+function mixResolvePair(aa, bb, L){
+  resolveIdx(L);                                // засчитать как решённую (учёт по idx)
+  if(g.mixActive) g.mixActive.delete(L);
+  emptySlot(aa); emptySlot(bb);
+  if(g.sel===aa||g.sel===bb) g.sel=null;
+  updateProgress();
+  // подмешивание с задержкой — чтобы свободные ячейки успели накопиться и новая пара
+  // не всегда вставала на то же место, где была решена предыдущая
+  // случайная задержка (0.8–3 с) перед подмешиванием: свободные ячейки успевают
+  // накопиться, и пары меняются местами в разное, непредсказуемое время
+  if(g.mixLeft>0 && !g.mixTimer) g.mixTimer=setTimeout(mixRefill, mixDelayMs());
+  mixAfter();
+}
+// подмешать новые пары в свободные ячейки (по одной паре: одна ячейка Ру + одна En,
+// каждая — из случайно выбранного свободного места)
+function mixRefill(){
+  g.mixTimer=null;
+  if(!g||!g.mixOn||g.committed) return;
+  const board=$('#board'); if(!board) return;
+  let freeRu=[...board.querySelectorAll('.tile.ru.slot-empty')];
+  let freeEn=[...board.querySelectorAll('.tile.en.slot-empty')];
+  while(g.mixLeft>0 && freeRu.length && freeEn.length){
+    const idx=drawMixCandidate();
+    if(idx<0){ g.mixLeft=0; break; }            // кандидатов больше нет — прекращаем подмешивание
+    const ri=freeRu.splice((Math.random()*freeRu.length)|0,1)[0];   // случайное свободное место Ру
+    const ei=freeEn.splice((Math.random()*freeEn.length)|0,1)[0];   // случайное свободное место En
+    fillSlot(ri, idx);                          // правый и левый столбцы получают ОДИН и тот же idx —
+    fillSlot(ei, idx);                          // так у каждого англ. слова есть его русская пара
+    if(g.mixActive) g.mixActive.add(idx);
+    if(g.roundIdxs) g.roundIdxs.add(idx);
+    g.mixLeft--;
+  }
+  updateProgress();
+  mixAfter();
+}
+// завершение раунда в режиме «Подмешивание»: когда подмешивать больше нечего
+// (mixLeft==0), нет отложенного подмешивания и на доске не осталось нерешённых пар
+function mixAfter(){
+  if(g.committed) return;
+  if(g.mixLeft>0) return;                        // ещё будут новые пары
+  if(g.mixTimer) return;                         // подмешивание запланировано
+  if(g.mixActive && g.mixActive.size>0) return;  // на доске остались нерешённые пары
+  g.committed=true;
+  commitRound();
+  if(g.round+1<g.rounds){ g.round++; setTimeout(loadRound,300); }
+  else finishGame();
+}
 function setRoundLabel(txt){ const e=$('#rKind'); if(e){ e.textContent=txt||''; e.style.display=txt?'inline-block':'none'; } }
 // взаимодействие с плиткой: обычный тап = сопоставление; в режиме жестов
 // двойной тап = +tier, долгое нажатие = -tier (сразу пишется в вес)
@@ -3960,7 +4179,9 @@ function attachTile(b){
   b.addEventListener('pointerleave',()=>{ clear(); });
 }
 function gestureRate(b, sign){
-  // потушенным плиткам жесты теперь разрешены (когда включён режим жестов):
+  // пустой ячейке (режим «Подмешивание») жесты недоступны — в ней нет слова
+  if(b.classList.contains('slot-empty') || b.dataset.idx==null || b.dataset.idx==='') return;
+  // потушенным плиткам жесты разрешены (когда включён режим жестов):
   // можно добрать или снять вес у уже погасшего слова
   const idx=+b.dataset.idx;
   const amt = sign>0 ? gestPlusOf(idx) : -gestMinusOf(idx);
@@ -3977,7 +4198,7 @@ function showFb(b, amt){
   setTimeout(()=>{ if(f.parentNode) f.parentNode.removeChild(f); }, 760);
 }
 function tap(b){
-  if(b.classList.contains('right')||b.classList.contains('done')) return;
+  if(b.classList.contains('right')||b.classList.contains('done')||b.classList.contains('slot-empty')) return;
   // озвучка английского слова при нажатии
   if(b.dataset.aud==='1') speakWord(+b.dataset.idx, b);     // аудио-плитка прослушивания — играет всегда + анимация
   else if(b.dataset.side==='L') speak(enOf(+b.dataset.idx));
@@ -4004,7 +4225,11 @@ function tap(b){
     // в «работе над ошибками» баллы НЕ начисляются — только пересборка (жесты весов
     // работают отдельно через gestureRate). Плитка всё равно закрывается.
     const aa=a, bb=b;
-    setTimeout(()=>{ aa.classList.remove('right'); bb.classList.remove('right'); aa.classList.add('done'); bb.classList.add('done'); aa.classList.remove('rework'); bb.classList.remove('rework'); revealAud(aa); revealAud(bb); resolveIdx(L); updateProgress(); afterMatch(); },300);
+    setTimeout(()=>{
+      aa.classList.remove('right'); bb.classList.remove('right'); aa.classList.remove('rework'); bb.classList.remove('rework');
+      if(g.mixOn){ mixResolvePair(aa, bb, L); return; }   // не тушим — заменяем новой парой
+      aa.classList.add('done'); bb.classList.add('done'); revealAud(aa); revealAud(bb); resolveIdx(L); updateProgress(); afterMatch();
+    },300);
   } else {
     // неверно
     a.classList.add('wrong'); b.classList.add('wrong');
@@ -4134,9 +4359,12 @@ function commitRound(){
   for(const k in g.delta){ applyGameWeight(prog, k, g.delta[k]); }   // v84: через центральную точку (учёт dailyLearned)
   for(const k in g.correct){ const s=prog.stats[k]||[0,0]; s[0]+=g.correct[k]; prog.stats[k]=s; g.gCorrect[k]=(g.gCorrect[k]||0)+g.correct[k]; }
   for(const k in g.wrong){ const s=prog.stats[k]||[0,0]; s[1]+=g.wrong[k]; prog.stats[k]=s; g.gWrong[k]=(g.gWrong[k]||0)+g.wrong[k]; }
-  const seen=new Set(prog.seen); g.cur.forEach(i=>seen.add(i)); prog.seen=[...seen];
+  // в режиме «Подмешивание» в раунде участвуют не только стартовые пары (g.cur),
+  // но и все подмешанные — берём полный набор показанных idx (g.roundIdxs)
+  const roundList = (g.mixOn && g.roundIdxs) ? [...g.roundIdxs] : g.cur;
+  const seen=new Set(prog.seen); roundList.forEach(i=>seen.add(i)); prog.seen=[...seen];
   const today=dayKey();
-  prog.daily[today]=(prog.daily[today]||0)+g.cur.length;
+  prog.daily[today]=(prog.daily[today]||0)+roundList.length;
   saveUser(user);
   g.delta={}; g.correct={}; g.wrong={};
 }
@@ -4224,10 +4452,11 @@ function launchConfetti(n){
 }
 function finishGame(){
   clearInterval(g.timerId);
+  if(g.mixTimer){ clearTimeout(g.mixTimer); g.mixTimer=null; }
   const elapsed=(performance.now()-g.t0)/1000;
   // Зачёт в рейтинг только если игра отвечает минимуму турнира: ≥5 раундов и ≥5 слов/фраз в раунде,
-  // и при этом НЕ включён режим «Тушить при неправильном сопоставлении».
-  const ranked = !g.dimWrong && (g.rounds>=RANK_MIN_ROUNDS && g.rows>=RANK_MIN_ROWS);
+  // и при этом НЕ включён режим «Тушить» и НЕ «Подмешивание».
+  const ranked = !g.dimWrong && !g.mixOn && (g.rounds>=RANK_MIN_ROUNDS && g.rows>=RANK_MIN_ROWS);
   // веса/статистика уже записаны по раундам (commitRound). Здесь только итог игры.
   const up=Object.keys(g.gCorrect).length, down=Object.keys(g.gWrong).length;
   prog.last={ correct:g.gCorrect, wrong:g.gWrong, pairs:g.pairs, rounds:g.rounds, mistakes:g.mistakes, when:Date.now() };
@@ -5433,6 +5662,9 @@ if($('#dwEnPairBtn')) $('#dwEnPairBtn').onclick=()=>setDimWrongMode('enpair');
 if($('#dwBothBtn')) $('#dwBothBtn').onclick=()=>setDimWrongMode('both');
 if($('#dwPairsBtn')) $('#dwPairsBtn').onclick=()=>setDimWrongMode('pairs');
 if($('#reworkBtn')) $('#reworkBtn').onclick=toggleRework;
+if($('#mixBtn')) $('#mixBtn').onclick=toggleMix;
+if($('#mixUp')) $('#mixUp').onclick=()=>setMixCount(mixCount+MIX_STEP);
+if($('#mixDown')) $('#mixDown').onclick=()=>setMixCount(mixCount-MIX_STEP);
 $('#masteryUp').onclick=()=>setMastery(masterySetting+1);
 $('#masteryDown').onclick=()=>setMastery(masterySetting-1);
 if($('#wcapHiUp')) $('#wcapHiUp').onclick=()=>setWeightCapHi(weightCapHi+WCAP_STEP);
@@ -8150,6 +8382,7 @@ $('#wTabs').querySelectorAll('button').forEach(b=>b.onclick=()=>setTab(b.dataset
   renderRounds();
   renderRows();
   renderDimWrong();
+  renderMix();
   renderTournament();
   renderCol();
   renderMastery();
