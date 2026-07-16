@@ -1567,7 +1567,7 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
       </div>
       <div class="mix-opts" id="mixOpts">
         <div class="setrow">
-          <div class="setlbl"><div class="lbl">Пар подмешивать в раунде</div><div class="desc">сколько новых случайных пар добавляется за раунд, 5–100</div></div>
+          <div class="setlbl"><div class="lbl">Пар подмешивать в раунде</div><div class="desc">сколько новых случайных пар добавляется за раунд, 1–100</div></div>
           <div class="rounds-stepper" id="mixStep"><button id="mixUp"><svg class="chev"><use href="#ic-chevu"/></svg></button><div class="rounds-val" id="mixVal">10</div><button id="mixDown"><svg class="chev"><use href="#ic-chevd"/></svg></button></div>
         </div>
       </div>
@@ -2519,7 +2519,7 @@ if(['en','enpair','both','pairs'].indexOf(dimWrongMode)<0) dimWrongMode='en';
 // обязательно там, где была отгадана предыдущая. Взаимоисключим с режимом «Тушить»
 // (при включении одного другой выключается). В этом режиме раскладка колонок всегда
 // «слева Ру / справа En» (рандом столбцов отключён), турнирный зачёт отключён.
-const MIN_MIX=5, MAX_MIX=100, MIX_STEP=5;   // сколько пар подмешивать за раунд
+const MIN_MIX=1, MAX_MIX=100, MIX_STEP=1;   // сколько пар подмешивать за раунд
 const MIX_DELAY_MIN=800, MIX_DELAY_MAX=3000;  // случайная задержка (мс) перед подмешиванием
 function mixDelayMs(){ return MIX_DELAY_MIN + Math.floor(Math.random()*(MIX_DELAY_MAX-MIX_DELAY_MIN+1)); }
 let mixOn = localStorage.getItem('wm2_mix_on')==='1';
