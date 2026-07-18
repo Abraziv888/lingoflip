@@ -209,6 +209,10 @@ input.namefield:-webkit-autofill:focus{
    через outline: он не участвует в раскладке, поэтому ряды не сдвигаются */
 .tile.slot-empty{background:transparent!important;border-color:transparent!important;outline:1px dashed var(--line);outline-offset:-2px;box-shadow:none!important;color:transparent!important;cursor:default;pointer-events:none;opacity:.35;transform:none!important}
 .tile.slot-empty:active{transform:none!important}
+/* режим «Подмешивание»: высота плитки заранее рассчитана на ДВЕ строки текста
+   (padding 26px + рамки ~6px + 2 строки с запасом). Иначе ряды grid (auto) меняют
+   высоту, когда короткое слово сменяется длинным и наоборот — и вся доска скачет */
+.board.mixing .tile{min-height:calc(32px + 2.5em)}
 .tile .fb{position:absolute;top:-8px;right:-4px;font-family:'Nunito';font-weight:800;font-size:calc(15px * var(--fs,1));padding:2px 7px;border-radius:9px;pointer-events:none;z-index:4;animation:fbpop .75s ease forwards}
 .tile .fb.plus{color:#10210a;background:var(--green)}
 .tile .fb.minus{color:#2a1010;background:var(--coral)}
@@ -4028,6 +4032,7 @@ function loadRound(){
   $('#rTotal').textContent=g.rounds;
   $('#pTotal').textContent=g.pairs;
   const board=$('#board'); board.innerHTML='';
+  board.classList.remove('mixing');
   board.classList.toggle('show-ipa', ipaOn);
   const en=slice.map(idx=>({idx,side:'L',txt:enOf(idx)}));
   const ru=slice.map(idx=>({idx,side:'R',txt:transOf(idx)}));
@@ -4057,7 +4062,7 @@ function loadPhraseRound(){
   $('#rTotal').textContent=g.rounds;
   $('#pTotal').textContent=g.pairs;
   setRoundLabel(r.kind==='ctx' ? 'Закрепление' : '');
-  const board=$('#board'); board.innerHTML=''; board.classList.remove('show-ipa');
+  const board=$('#board'); board.innerHTML=''; board.classList.remove('show-ipa','mixing');
   const en=items.map(idx=>({idx,side:'L',txt:enOf(idx)}));
   const ru=items.map(idx=>({idx,side:'R',txt:transOf(idx)}));
   if(g.col==='split'){
@@ -4087,6 +4092,7 @@ function loadRoundMix(){
   g.inRework=false; showReworkBanner(false);
   if(g.mixTimer){ clearTimeout(g.mixTimer); g.mixTimer=null; }
   g.mixPending=0; g.mixBurst=false; g.mixHits=[]; g.mixWaitT0=0; g.mixPendTexts=[];   // пустые ячейки; серия угадываний; старт ожидания; тексты убранных пар
+  g.epoch=(g.epoch||0)+1;   // эпоха раунда: отложенные колбэки прошлого раунда по ней самоотменяются
   const enabled=enabledIndices();
   // сколько ещё пар можно подмешать в этот раунд (не больше, чем есть слов сверх окна)
   g.mixLeft = Math.min(g.mixPer, Math.max(0, enabled.length - slice.length));
@@ -4101,8 +4107,9 @@ function loadRoundMix(){
   const en=slice.map(idx=>({idx,side:'L',txt:enOf(idx)}));
   const ru=slice.map(idx=>({idx,side:'R',txt:transOf(idx)}));
   // ВСЕГДА split: левая колонка — русские (side R), правая — английские (side L);
-  // рандом столбцов в этом режиме отключён
-  board.classList.add('split');
+  // рандом столбцов в этом режиме отключён. Класс mixing резервирует высоту плиток
+  // под две строки, чтобы ряды не скакали при смене слов
+  board.classList.add('split','mixing');
   board.style.gridTemplateRows='repeat('+slice.length+',auto)';
   [...shuffle(ru), ...shuffle(en)].forEach(t=>board.appendChild(makeTile(t)));
   updateProgress();
@@ -4163,9 +4170,12 @@ function drawMixCandidate(){
   if(skipped.length) g.pool.unshift(...skipped);
   return found;
 }
-// превратить плитку в пустую ячейку (свободное место под будущую пару)
+// превратить плитку в пустую ячейку (свободное место под будущую пару).
+// Высоту замораживаем: пустая ячейка держит место как слово, что тут стояло,
+// чтобы ряд не сжимался (страховка для слов длиннее двух строк)
 function emptySlot(tile){
   if(!tile) return;
+  if(tile.offsetHeight>0) tile.style.minHeight=tile.offsetHeight+'px';
   tile.classList.remove('sel','right','wrong','done','burnt','revealed','rework','aud','fade');
   tile.classList.add('slot-empty');
   tile.removeAttribute('data-idx');
@@ -4176,6 +4186,7 @@ function emptySlot(tile){
 // заполнить свободную ячейку новой парой (idx), сохранив сторону/колонку ячейки
 function fillSlot(tile, idx){
   if(!tile) return;
+  tile.style.minHeight='';                      // снять заморозку высоты пустой ячейки
   const side = tile.classList.contains('en') ? 'L' : 'R';
   tile.classList.remove('slot-empty','done','burnt','right','wrong','sel','revealed','rework','aud');
   tile.dataset.idx=idx; tile.dataset.side=side; tile.dataset.aud='';
@@ -4196,7 +4207,10 @@ function fillSlot(tile, idx){
 // угаданная пара в режиме «Подмешивание»: не тушим, а освобождаем ячейки и
 // планируем подмешивание новой пары
 function mixResolvePair(aa, bb, L){
-  resolveIdx(L);                                // засчитать как решённую (учёт по idx)
+  // ЗАГЛУШКА-идемпотентность: пара обрабатывается ровно один раз. При очень быстрой
+  // игре по одной паре могут выстрелить два отложенных обработчика (например,
+  // «неверно» и сразу «верно») — второй не должен списать бюджет/подмешать лишнее.
+  if(!resolveIdx(L)){ updateProgress(); mixAfter(); return; }
   if(g.mixActive) g.mixActive.delete(L);
   if(g.sel===aa||g.sel===bb) g.sel=null;
   if(g.mixHits) g.mixHits.push(performance.now());   // отметка успешного угадывания (для разгона)
@@ -4313,7 +4327,10 @@ function mixAfter(){
 function mixDimPair(enI){
   if(!g||!g.mixOn||g.committed) return;
   const enT=boardTile(enI,'L'), ruT=boardTile(enI,'R');
-  resolveIdx(enI);                               // пара выбывает из раунда (как в режиме «Тушить»)
+  // ЗАГЛУШКА-идемпотентность: если пара уже разрешена (например, игрок успел верно
+  // сопоставить её, пока шла красная вспышка) — ничего не делаем: ни списания
+  // бюджета, ни второго подмешивания, ни тушения чужих ячеек
+  if(!resolveIdx(enI)){ updateProgress(); mixAfter(); return; }
   if(g.mixActive) g.mixActive.delete(enI);
   if(g.sel===enT||g.sel===ruT) g.sel=null;
   // замена возможна только при наличии «свежего» кандидата — иначе пара гаснет
@@ -4445,7 +4462,9 @@ function tap(b){
     // в «работе над ошибками» баллы НЕ начисляются — только пересборка (жесты весов
     // работают отдельно через gestureRate). Плитка всё равно закрывается.
     const aa=a, bb=b;
+    const ep=g.epoch;   // ЗАГЛУШКА-эпоха: если раунд успел смениться, колбэк не трогает новую доску
     setTimeout(()=>{
+      if(g.mixOn && ep!==undefined && g.epoch!==ep) return;
       aa.classList.remove('right'); bb.classList.remove('right'); aa.classList.remove('rework'); bb.classList.remove('rework');
       if(g.mixOn && !g.inRework){ mixResolvePair(aa, bb, L); return; }   // не тушим — заменяем новой парой (кроме «работы над ошибками»)
       aa.classList.add('done'); bb.classList.add('done'); revealAud(aa); revealAud(bb); resolveIdx(L); updateProgress(); afterMatch();
@@ -4498,7 +4517,9 @@ function tap(b){
       // на их месте подмешивается новое слово
       const enT0 = aa.dataset.side==='L'?aa:bb;   // английская плитка ошибочной пары
       const enI = +enT0.dataset.idx;
+      const ep=g.epoch;   // ЗАГЛУШКА-эпоха: колбэк прошлого раунда не трогает новую доску
       setTimeout(()=>{
+        if(ep!==undefined && g.epoch!==ep) return;
         aa.classList.remove('wrong'); bb.classList.remove('wrong');
         mixDimPair(enI);
       },330);
