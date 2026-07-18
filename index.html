@@ -192,7 +192,10 @@ input.namefield:-webkit-autofill:focus{
 .timer{font-family:'Nunito';font-weight:800;font-size:calc(18px * var(--fs,1));min-width:58px;text-align:right;color:var(--teal)}
 .roundline{text-align:center;font-weight:800;color:var(--muted);font-size:calc(14px * var(--fs,1));margin-bottom:14px}
 .roundline b{color:var(--ink)}
-.board{display:grid;grid-template-columns:repeat(2,1fr);gap:8px 10px;touch-action:pan-y}
+/* колонки строго 50/50: minmax(0,1fr) вместо 1fr, иначе минимум колонки зависит от
+   содержимого, и при исчезновении/появлении слов (угадали пару / подмешалось новое)
+   ширина колонок «дышит» и вся вёрстка сдвигается */
+.board{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 10px;touch-action:pan-y}
 .board.split{grid-auto-flow:column}
 .tile{position:relative;font:inherit;font-family:'Nunito';font-weight:700;font-size:calc(clamp(13px,3.6vw,16px) * var(--fs,1));background:var(--card2);border:1px solid var(--line);border-bottom:3px solid #11141c;border-radius:14px;padding:13px 6px;cursor:pointer;min-height:58px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;transition:transform .07s,background .15s,border-color .15s,opacity .25s;color:var(--ink);word-break:break-word;line-height:1.12;-webkit-user-select:none;user-select:none;touch-action:pan-y}
 .tile.ru{color:#cdd2dc}
@@ -4213,8 +4216,11 @@ function mixResolvePair(aa, bb, L){
   } else {
     // подмешивать больше нечего: пара НЕ освобождает ячейку, а гаснет блёкло —
     // как в режиме «Тушить» (класс done). И только САМАЯ ПОСЛЕДНЯЯ пара раунда
-    // совсем не тухнет — остаётся зелёной до перехода.
-    const last = !g.mixActive || g.mixActive.size===0;
+    // совсем не тухнет — остаётся зелёной до перехода. «Последняя» — это когда
+    // больше НИЧЕГО не появится: нет нерешённых пар, нет ожидающих заполнения
+    // ячеек и нет запланированных подмешиваний (при быстрых ответах mixActive
+    // может опустеть, пока замены ещё в пути — тогда пара НЕ последняя)
+    const last = (!g.mixActive || g.mixActive.size===0) && (g.mixPending||0)===0 && !g.mixTimer;
     if(last){
       aa.classList.add('right'); bb.classList.add('right');
     } else {
