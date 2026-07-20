@@ -1212,6 +1212,9 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
 /* аудио-плитка на игровом поле: звуковая дорожка (тонкие столбики разной высоты,
    центрированные по вертикали — как waveform). Высоты задаются инлайн из JS. */
 .tile.aud .audic{display:flex;align-items:center;justify-content:center;gap:2px;height:36px}
+/* v65: раскрытое слово занимает ту же высоту, что и эквалайзер (36px) —
+   плитка и ряд сетки не меняют габаритов, ничего не «скачет» */
+.tile.aud.revealed .w{display:flex;align-items:center;justify-content:center;min-height:36px}
 .tile.aud .audic i{display:block;width:3px;border-radius:3px;background:var(--teal);transform-origin:center;will-change:transform;opacity:.92}
 .tile.aud.sel .audic i{background:var(--teal)}
 /* при воспроизведении — «живая» бегущая волна: столбики пульсируют со сдвигом фазы */
@@ -1515,7 +1518,7 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
 <div class="wrap">
 
   <div class="topbar">
-    <div class="logo"><span class="dot"><svg class="logoic" viewBox="0 0 32 32"><use href="#ic-logo"/></svg></span><span class="txt"><span class="ttl-row"><span class="appname">LingoFlip</span><span class="tagcol"><span class="t1"><span class="ru">RU</span> <span class="dash">-</span> <span class="en">EN</span></span><span class="t2">Cards</span></span></span><span class="by"><b>by Abraziv</b> · версия 88</span></span></div>
+    <div class="logo"><span class="dot"><svg class="logoic" viewBox="0 0 32 32"><use href="#ic-logo"/></svg></span><span class="txt"><span class="ttl-row"><span class="appname">LingoFlip</span><span class="tagcol"><span class="t1"><span class="ru">RU</span> <span class="dash">-</span> <span class="en">EN</span></span><span class="t2">Cards</span></span></span><span class="by"><b>by Abraziv</b> · версия 89</span></span></div>
     <button class="profile" id="userPill"><span class="av"><svg class="ic"><use href="#ic-profile"/></svg><span class="medal" id="pillCup" style="display:none"><span class="mn"></span></span><span class="av-warn" id="pillWarn" style="display:none" title="Сессия истекла — войдите снова">!</span></span><span class="nm" id="userName">—</span></button>
   </div>
 
@@ -4189,6 +4192,11 @@ function loadRoundMix(){
   g.inRework=false; showReworkBanner(false);
   if(g.mixTimer){ clearTimeout(g.mixTimer); g.mixTimer=null; }
   g.mixPending=0; g.mixBurst=false; g.mixHits=[]; g.mixWaitT0=0; g.mixPendTexts=[];   // пустые ячейки; серия угадываний; старт ожидания; тексты убранных пар
+  // v63: «вразнобой» — очереди половинок. mixNeedRu: idx, чей EN на доске, а RU ещё
+  // не показан; mixNeedEn: наоборот. ИНВАРИАНТ: длины очередей всегда равны.
+  // mixResvClose — сколько ожидающих заполнений зарезервированы под «закрытие»
+  // долгов (такие события бесплатны: не тратят ни бюджет, ни свежих кандидатов)
+  g.mixNeedRu=[]; g.mixNeedEn=[]; g.mixResvClose=0;
   g.epoch=(g.epoch||0)+1;   // эпоха раунда: отложенные колбэки прошлого раунда по ней самоотменяются
   const enabled=enabledIndices();
   // сколько ещё пар можно подмешать в этот раунд (не больше, чем есть слов сверх окна)
@@ -4226,6 +4234,10 @@ function mixBusyTexts(){
     en.add(enOf(+i)); ru.add(transOf(+i));
   });
   if(g && g.mixPendTexts) g.mixPendTexts.forEach(p=>{ en.add(p[0]); ru.add(p[1]); });
+  // v63: у слов-половинок вторая сторона ещё не на доске, но обязательно появится —
+  // её текст тоже «занят», иначе позже на доске окажутся две одинаковые надписи
+  if(g && g.mixNeedRu) g.mixNeedRu.forEach(x=>{ en.add(enOf(x)); ru.add(transOf(x)); });
+  if(g && g.mixNeedEn) g.mixNeedEn.forEach(x=>{ en.add(enOf(x)); ru.add(transOf(x)); });
   return {en, ru};
 }
 // есть ли в пуле хотя бы need «свежих» кандидатов (не дубликаты по тексту)?
@@ -4239,6 +4251,7 @@ function mixFreshCount(need){
     const c=g.pool[k];
     if(g.mixActive && g.mixActive.has(c)) continue;
     if(g.closed && g.closed.has(c)) continue;
+    if((g.mixNeedRu&&g.mixNeedRu.indexOf(c)>=0)||(g.mixNeedEn&&g.mixNeedEn.indexOf(c)>=0)) continue;  // v63: половинка уже в игре
     if(busy.en.has(enOf(c)) || busy.ru.has(transOf(c))) continue;
     if(++n>=need) return true;
   }
@@ -4256,6 +4269,7 @@ function drawMixCandidate(){
     const c=g.pool.pop();
     if(g.mixActive && g.mixActive.has(c)) continue;   // уже на доске
     if(g.closed && g.closed.has(c)) continue;         // уже решён в этом раунде
+    if((g.mixNeedRu&&g.mixNeedRu.indexOf(c)>=0)||(g.mixNeedEn&&g.mixNeedEn.indexOf(c)>=0)) continue;  // v63: половинка уже в игре
     if(busy.en.has(enOf(c)) || busy.ru.has(transOf(c))){
       skipped.push(c);                                // текст-дубликат: вернём в пул позже
       continue;
@@ -4315,13 +4329,21 @@ function mixResolvePair(aa, bb, L){
   // убираем пару и планируем замену ТОЛЬКО если в пуле хватает «свежих» кандидатов
   // (не совпадающих по тексту) на все ожидающие ячейки + эту; иначе пара гаснет
   // блёкло — без «моргания» (пропала-вернулась)
-  const canMix = g.mixLeft>0 && mixFreshCount((g.mixPending||0)+1);
+  // v63: событие-«закрытие» (недостающие половинки уже введённых слов) бесплатно —
+  // не тратит ни бюджет, ни свежих кандидатов. Поэтому ячейки МОЖНО освобождать,
+  // если есть незарезервированные долги, даже когда бюджет исчерпан.
+  const _resv=(g.mixResvClose||0);
+  const _debts=(g.mixNeedRu?g.mixNeedRu.length:0);
+  const _introPend=Math.max(0,(g.mixPending||0)-_resv);
+  const asClose = (_debts-_resv)>0;
+  const canMix = asClose || (g.mixLeft>0 && mixFreshCount(_introPend+1));
   if(canMix){
     // есть что подмешать: запоминаем тексты пары (чтобы замена не выглядела так же),
     // освобождаем ячейки и планируем появление новой пары
     (g.mixPendTexts=g.mixPendTexts||[]).push([enOf(L), transOf(L)]);
     emptySlot(aa); emptySlot(bb);
-    g.mixLeft--;                                // одна интродукция «забронирована» под этот слот
+    if(asClose) g.mixResvClose=_resv+1;         // событие закроет долг — бюджет не тратим
+    else g.mixLeft--;                           // одна интродукция «забронирована» под этот слот
     if((g.mixPending||0)===0) g.mixWaitT0=performance.now();   // старт общего ожидания
     g.mixPending=(g.mixPending||0)+1;
     mixScheduleFill();
@@ -4361,6 +4383,77 @@ function mixScheduleFill(){
     g.mixTimer=setTimeout(mixFillOne, mixInitialDelay(free));
   }
 }
+// ---------- v63: одно событие заполнения (пара свободных ячеек Ру+En) ----------
+// Три типа события, в порядке приоритета и с «железобетонными» гарантиями:
+//  ЗАКРЫТИЕ  — в ячейки приходят НЕДОСТАЮЩИЕ половинки ранее введённых слов
+//              (RU для слова из mixNeedRu + EN для слова из mixNeedEn); оба слова
+//              становятся полными парами. Бесплатно (бюджет/кандидаты не тратятся).
+//              ОБЯЗАТЕЛЬНО, если: закрытие зарезервировано; или на доске меньше
+//              ДВУХ полных пар (v64 — игроку всегда есть что сопоставлять); или
+//              интро невозможно.
+//  ОТКРЫТИЕ  — «вразнобой»: EN нового слова A + RU ДРУГОГО нового слова B; их
+//              вторые половинки придут следующими закрытиями. Требует (v64): на
+//              доске ≥2 полных пар; свежих кандидатов в пуле БОЛЬШЕ ДВУХ; доп.
+//              бюджет ≥1; долгов меньше (rows−2) — минимум два слота под пары.
+//  ПАРА      — классическое заполнение одним словом в обе ячейки.
+// Гарантия завершаемости: mixAfter не закрывает раунд, пока очереди половинок не
+// пусты, а «закрытия» возможны всегда (бесплатны) — долги гарантированно гасятся.
+function mixFillEvent(ri, ei){
+  const debts=(g.mixNeedRu?g.mixNeedRu.length:0);
+  const resv=(g.mixResvClose||0);
+  const pairsNow=(g.mixActive?g.mixActive.size:0);
+  // v64: гарантия «не менее ДВУХ полных пар» рядом с половинками: закрытие
+  // обязательно уже при <2 полных парах (закрытие добавляет сразу две)
+  const closeNow = debts>0 && ( resv>0 || pairsNow<2 || g.mixLeft<1 || !mixFreshCount(1) || Math.random()<0.5 );
+  if(closeNow){
+    const X=g.mixNeedRu.shift(), Y=g.mixNeedEn.shift();
+    fillSlot(ri, X);                            // недостающий русский для X (его EN уже на доске)
+    fillSlot(ei, Y);                            // недостающий английский для Y (его RU уже на доске)
+    g.mixActive.add(X); g.mixActive.add(Y);
+    if(g.roundIdxs){ g.roundIdxs.add(X); g.roundIdxs.add(Y); }
+    g.mixResvClose=Math.max(0, resv-1);
+    return true;
+  }
+  // ОТКРЫТИЕ: расцепленная подача (условие пользователя: в пуле больше 2 свежих пар)
+  // v64: долгов не больше rows−2 — на доске всегда остаётся место минимум под
+  // ДВЕ полные пары; и само открытие разрешено только при ≥2 полных парах сейчас
+  // (открытие пар не добавляет). На окне из 2 пар открытия невозможны вовсе.
+  const maxDebts=Math.max(0,(g.rows||5)-2);
+  if(g.mixLeft>=1 && pairsNow>=2 && debts<maxDebts && mixFreshCount(3) && Math.random()<0.6){
+    const A=drawMixCandidate();
+    let B=-1;
+    if(A>=0){
+      g.mixNeedRu.push(A);                      // ВАЖНО: A в очередь ДО выбора B — иначе B может
+      B=drawMixCandidate();                     // совпасть с A по тексту (busy его ещё не «видит»)
+    }
+    if(A>=0 && B>=0){
+      fillSlot(ei, A);                          // английская половинка слова A
+      fillSlot(ri, B);                          // русская половинка слова B
+      g.mixNeedEn.push(B);                      // очереди выросли синхронно — инвариант равенства
+      g.mixLeft--;                              // второе слово события (первое списано при резервировании)
+      return true;
+    }
+    if(A>=0){ g.mixNeedRu.pop(); g.pool.push(A); }  // второго свежего не нашлось — откат A
+  }
+  // ПАРА: классика
+  const idx=drawMixCandidate();
+  if(idx>=0){
+    fillSlot(ri, idx); fillSlot(ei, idx);
+    g.mixActive.add(idx);
+    if(g.roundIdxs) g.roundIdxs.add(idx);
+    return true;
+  }
+  // кандидатов нет вовсе: если остались долги — закрываем их (бесплатно)
+  if(debts>0){
+    const X=g.mixNeedRu.shift(), Y=g.mixNeedEn.shift();
+    fillSlot(ri, X); fillSlot(ei, Y);
+    g.mixActive.add(X); g.mixActive.add(Y);
+    if(g.roundIdxs){ g.roundIdxs.add(X); g.roundIdxs.add(Y); }
+    g.mixResvClose=Math.max(0, resv-1);
+    return true;
+  }
+  return false;
+}
 // показать ОДНУ новую пару в случайной свободной ячейке (одна Ру + одна En),
 // затем, если свободные ячейки ещё остались, показать следующую поочерёдно,
 // плавно, а не все сразу
@@ -4374,17 +4467,12 @@ function mixFillOne(){
   const cap=Math.min(freeRu.length, freeEn.length);
   if((g.mixPending||0)>cap) g.mixPending=cap;
   if(cap>0 && (g.mixPending||0)>0){
-    const idx=drawMixCandidate();
-    if(idx>=0){
-      const ri=freeRu.splice((Math.random()*freeRu.length)|0,1)[0];   // случайное свободное место Ру
-      const ei=freeEn.splice((Math.random()*freeEn.length)|0,1)[0];   // случайное свободное место En
-      fillSlot(ri, idx);                        // один и тот же idx в обе колонки — пара En↔Ру
-      fillSlot(ei, idx);
-      if(g.mixActive) g.mixActive.add(idx);
-      if(g.roundIdxs) g.roundIdxs.add(idx);
+    const ri=freeRu.splice((Math.random()*freeRu.length)|0,1)[0];   // случайное свободное место Ру
+    const ei=freeEn.splice((Math.random()*freeEn.length)|0,1)[0];   // случайное свободное место En
+    if(mixFillEvent(ri, ei)){
       g.mixPending--;
     } else {
-      // кандидатов больше нет (крохотный набор / всё показано): останавливаем
+      // заполнить нечем (нет ни долгов, ни кандидатов): останавливаем
       // подмешивание ПОЛНОСТЬЮ, иначе раунд никогда не завершится
       g.mixPending=0; g.mixLeft=0;
     }
@@ -4407,6 +4495,7 @@ function mixAfter(){
   if(g.mixTimer) return;                         // показ новой пары запланирован
   if((g.mixPending||0)>0) return;                // есть пустые ячейки, ждущие заполнения
   if(g.mixActive && g.mixActive.size>0) return;  // на доске остались нерешённые пары
+  if((g.mixNeedRu&&g.mixNeedRu.length>0)||(g.mixNeedEn&&g.mixNeedEn.length>0)) return;  // v63: половинки ждут вторые части
   // Замечание: остаток бюджета (g.mixLeft>0) НЕ блокирует завершение — бюджет
   // тратится синхронно при решении пары; если пар и ожиданий больше нет, потратить
   // его уже не на что (например, кончились «свежие» кандидаты)
@@ -4424,6 +4513,10 @@ function mixAfter(){
 // слово, иначе пара гаснет блёкло (как в «Тушить»). Штраф −вес снимается в tap().
 function mixDimPair(enI){
   if(!g||!g.mixOn||g.committed) return;
+  // v63: слово-«половинка» (RU ещё не показан) не тушится — иначе его вторая
+  // половинка осталась бы навсегда лишней. Штраф −вес уже снят в tap(); плитки
+  // просто остаются на доске после красной вспышки.
+  if(g.mixNeedRu && g.mixNeedRu.indexOf(enI)>=0){ updateProgress(); mixAfter(); return; }
   const enT=boardTile(enI,'L'), ruT=boardTile(enI,'R');
   // ЗАГЛУШКА-идемпотентность: если пара уже разрешена (например, игрок успел верно
   // сопоставить её, пока шла красная вспышка) — ничего не делаем: ни списания
@@ -4433,12 +4526,17 @@ function mixDimPair(enI){
   if(g.sel===enT||g.sel===ruT) g.sel=null;
   // замена возможна только при наличии «свежего» кандидата — иначе пара гаснет
   // блёкло без цикла «пропала-вернулась»
-  const canMix = g.mixLeft>0 && mixFreshCount((g.mixPending||0)+1);
+  const _resv=(g.mixResvClose||0);
+  const _debts=(g.mixNeedRu?g.mixNeedRu.length:0);
+  const _introPend=Math.max(0,(g.mixPending||0)-_resv);
+  const asClose=(_debts-_resv)>0;               // v63: закрытие долгов бесплатно
+  const canMix = asClose || (g.mixLeft>0 && mixFreshCount(_introPend+1));
   if(canMix){
     (g.mixPendTexts=g.mixPendTexts||[]).push([enOf(enI), transOf(enI)]);
     if(enT) emptySlot(enT);
     if(ruT) emptySlot(ruT);
-    g.mixLeft--;
+    if(asClose) g.mixResvClose=_resv+1;
+    else g.mixLeft--;
     if((g.mixPending||0)===0) g.mixWaitT0=performance.now();
     g.mixPending=(g.mixPending||0)+1;
     mixScheduleFill();                           // ошибка не считается «успехом» — mixHits не трогаем
