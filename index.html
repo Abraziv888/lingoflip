@@ -6197,6 +6197,35 @@ async function buildDiagReport(){
     else{ L.push('user_stats:'); us.forEach(r=> L.push('  '+padr(r.mode_name||'?',8)+' игр='+padr(r.games,4)+' раундов='+padr(r.rounds,4)+' слов='+padr(r.words,4)+' время='+padr(r.total_time,5)+'с upd='+r.updated_at)); }
     L.push('user_progress (весов в облаке): '+d.user_progress_count);
   }
+  // --- РЕЙТИНГ ТЕКУЩЕЙ НЕДЕЛИ (что реально лежит в базе прямо сейчас) ---
+  L.push('');
+  L.push('— РЕЙТИНГ ТЕКУЩЕЙ НЕДЕЛИ (weekly_leaderboard) —');
+  const wk=d.weekly;
+  if(!wk) L.push('нет данных (старая версия cloudDiagnostics?)');
+  else if(wk.error) L.push('!! ОШИБКА чтения витрины: '+wk.error);
+  else if(!wk.length){
+    L.push('в зачёте никого: у всех week_games=0 (начало недели или пуши не доезжают)');
+    if(d.weeklyTotal!==undefined) L.push('строк в витрине всего: '+d.weeklyTotal);
+  } else {
+    if(d.weeklyTotal!==undefined) L.push('строк в витрине всего: '+d.weeklyTotal+', в зачёте (игры>0): '+wk.length+(wk.length===20?' (показан топ-20)':''));
+    const myUid = d.session ? d.session.uid : null;
+    const mm = t => { t=Math.round(t||0); return Math.floor(t/60)+':'+String(t%60).padStart(2,'0'); };
+    wk.forEach((r,i)=>{
+      // недельное мастерство: витрина может отдавать week_green/… или пожизненные green/…
+      const g = (r.week_green!==undefined)?r.week_green:r.green;
+      const rd= (r.week_red  !==undefined)?r.week_red  :r.red;
+      const ln= (r.week_learned!==undefined)?r.week_learned:r.learned;
+      let row='  '+padr((i+1)+'.',4)+padr(r.name||'(без имени)',14)
+             +' игр='+padr(r.week_games||0,4)
+             +(r.total_time!==undefined?(' время='+padr(mm(r.total_time),7)):'');
+      if(g!==undefined||rd!==undefined||ln!==undefined)
+        row+=' +'+(g||0)+' −'+(rd||0)+' ✓'+(ln||0);
+      if(myUid && r.user_id===myUid) row+='   ← это ты';
+      L.push(row);
+    });
+    if(myUid && !wk.some(r=>r.user_id===myUid))
+      L.push('  (твоего аккаунта в зачёте недели нет — за эту неделю ещё нет зачётных игр)');
+  }
   if(d.lastLbError){ L.push(''); L.push('последняя ошибка записи рейтинга: '+d.lastLbError); }
   // подсказка: если тут не ноль — смотреть кнопку «Журнал ошибок» ниже
   try{ if(typeof appLogCount==='function'){ L.push(''); L.push('записей в журнале ошибок: '+appLogCount()); } }catch(e){}
@@ -7847,6 +7876,16 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
                     } catch(e){ out.user_progress_count = 'ошибка: '+String(e); }
                 }
             } catch(e) { out.error = String(e); }
+            // Недельный рейтинг из базы — сессия для чтения витрины не нужна.
+            // weekly: топ-20 С НЕНУЛЕВЫМИ играми (ровно то, что видит экран рейтинга);
+            // weeklyTotal: сколько строк в витрине всего (включая нули после сброса недели).
+            try{
+                out.weekly = await window.cloudFetchWeekly();
+            }catch(e){ out.weekly = { error: (e && e.message) || String(e) }; }
+            try{
+                const c = await supabase.from('weekly_leaderboard').select('user_id', { count:'exact', head:true });
+                out.weeklyTotal = c.error ? ('ошибка: '+c.error.message) : c.count;
+            }catch(e){ out.weeklyTotal = 'ошибка: '+String(e); }
             out.lastLbError = window.__lbLastError ? (window.__lbLastError.message || String(window.__lbLastError)) : null;
             return out;
         };
@@ -8842,6 +8881,11 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
                     if (r && r.grammar && typeof gtSetStats==='function') gtSetStats(r.grammar); // прогресс грамматики из облака
                     if (r && r.grammar && typeof gtApplyCloudWeights==='function') gtApplyCloudWeights(r.grammar,'replace'); // веса заданий из облака
                     await linkCloudToLocal(lid, name); // аккаунт привязан к этой локальной записи
+                    // строка рейтинга сразу при входе/регистрации (FAQ это обещает);
+                    // локальное состояние здесь = только что принятое облачное,
+                    // поэтому публикация ничего не затирает. Для нового аккаунта
+                    // создаётся строка с нулями — игрок виден в рейтинге до первой игры.
+                    try{ await window.cloudPushLeaderboard(name); }catch(e){}
                 }
             } catch (e) { console.warn('Не удалось подтянуть данные из облака:', e); }
 
@@ -8887,15 +8931,23 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
                  : src==='modal' ? readCreds($('#modal-username'),$('#modal-password'),$('#modal-auth-msg'))
                  :                 readCreds($('#auth-username'),$('#auth-password'),elErrorMsg);
         }
-        // Полная очистка ЛОКАЛЬНОГО профиля. Ключи сессии (sb-*) НЕ трогаем:
+        // Полная очистка ЛОКАЛЬНОГО прогресса. Ключи сессии (sb-*) НЕ трогаем:
         // функция вызывается уже ПОСЛЕ создания аккаунта, и удаление токенов
         // выкинуло бы человека из только что созданной учётной записи.
+        // ВАЖНО: чистится и грамматика (wm2_gtstats/gweights/gseen) с per-name
+        // служебными ключами (syncbase/syncepoch/selsnap) — раньше они выживали,
+        // и новый аккаунт наследовал турнирные игры и веса СТАРОГО профиля:
+        // cloudPushLeaderboard добавлял чужие rgames в рейтинг, cloudPushGrammar
+        // выгружал чужие веса под новым uid, а устаревшая дельта-база при
+        // совпадении имён искажала счётчики. Настройки интерфейса не трогаем.
         function wipeLocalProfile(){
             try{
                 for(let i=localStorage.length-1;i>=0;i--){ const k=localStorage.key(i);
-                    if(k && k.indexOf('wm2_user_')===0) localStorage.removeItem(k); }
+                    if(k && (k.indexOf('wm2_user_')===0 || k.indexOf('wm2_syncbase_')===0 ||
+                             k.indexOf('wm2_syncepoch_')===0 || k.indexOf('wm2_selsnap_')===0)) localStorage.removeItem(k); }
             }catch(e){ appLogErr('регистрация','не удалось очистить локальный профиль', e); }
-            ['wm2_players','wm2_current','wm2_localid','wm2_linked','wm2_lastsync'].forEach(k=>{ try{ localStorage.removeItem(k); }catch(e){} });
+            ['wm2_players','wm2_current','wm2_localid','wm2_linked','wm2_lastsync',
+             'wm2_gtstats','wm2_gweights','wm2_gseen','wm2_cuprank'].forEach(k=>{ try{ localStorage.removeItem(k); }catch(e){} });
             try{ user=null; }catch(e){}
         }
 
