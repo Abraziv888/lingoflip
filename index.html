@@ -3589,7 +3589,18 @@ function renderLevels(){
       const c=document.createElement('button');
       c.className='lvchip '+(general?(on?'on':'off'):'off');
       c.innerHTML=`<span class="nm"><span class="thou-full">${T.name}</span><span class="thou-short">${t+1}к</span></span><span class="pc">1000 сл.</span>`;
-      c.onclick=()=>{ if(general) toggleThousand(t); };
+      c.onclick=()=>{
+        if(general){ toggleThousand(t); return; }
+        // v86: раньше тап по тысяче при выключенном General молча игнорировался.
+        // Теперь тап означает «хочу выбирать тысячами»: включаем General и
+        // гарантированно активируем эту тысячу (её сотни убираем из выключенных).
+        user.levelsGeneral=true;
+        const off=new Set(user.offHundreds||[]);
+        thousandHundreds(t).forEach(h=>off.delete(h));
+        user.offHundreds=[...off];
+        saveUser(user); renderLevels();
+        try{ flashToast('General включён · тысяча «'+T.name+'» активна'); }catch(e){}
+      };
       tg.appendChild(c);
     });
   }
@@ -3601,7 +3612,18 @@ function renderLevels(){
       let cls='lvchip'; if(done) cls+=' done'; else if(active) cls+=' on'; else cls+=' off';
       const c=document.createElement('button'); c.className=cls;
       c.innerHTML=`<span class="nm">${L.name}</span><span class="cnt">${levelCount(li)} сл.</span><span class="pc">${pc}%</span>`;
-      c.onclick=()=>{ if(!general) toggleLevel(li); };
+      c.onclick=()=>{
+        if(!general){ toggleLevel(li); return; }
+        // v86: раньше тап по уровню при включённом General молча игнорировался —
+        // человек «переключал наборы» C/C+/C++, а активный набор не менялся,
+        // и счётчики на главной показывали одни и те же числа. Теперь тап
+        // означает «хочу именно этот набор»: General выключается, активным
+        // остаётся только нажатый уровень.
+        user.levelsGeneral=false;
+        user.levelsOff=LEVELS.map((_,i)=>i).filter(i=>i!==li);
+        saveUser(user); renderLevels();
+        try{ flashToast('General выключен · активен только набор '+L.name); }catch(e){}
+      };
       grid.appendChild(c);
     });
   }
@@ -6201,6 +6223,17 @@ async function buildDiagReport(){
           if(!days.some(d=>sumDay('dailyGames',d)||sumDay('dailyTime',d))) L.push('  (все дни пустые)');
         }
       }catch(e){ L.push('НЕДЕЛЯ локально: не посчиталась — '+e); }
+      // активный набор текущего режима: это ответ на «почему счётчик не меняется»
+      try{
+        if(typeof scopeIndices==='function' && typeof mode!=='undefined'){
+          L.push('АКТИВНЫЙ НАБОР (режим '+mode+'): '+scopeIndices().length+' карточек');
+          if(mode==='words' && user){
+            L.push('  выбор слов: '+(user.levelsGeneral!==false
+              ? 'General (по тысячам/сотням), выключено сотен: '+((user.offHundreds||[]).length)+' из 50'
+              : 'по уровням; выключены: '+(((user.levelsOff||[]).map(i=>(typeof LEVEL_NAMES!=='undefined'&&LEVEL_NAMES[i])||i).join(', '))||'нет')));
+          }
+        }
+      }catch(e){}
       // v83: рейтинг (cloudPushLeaderboard) прибавляет к сумме ЗАЧЁТНЫЕ игры
       // грамматики (rgames). Диагностика их не учитывала → у игрока с турнирной
       // грамматикой «СВЕРКА игр» показывала ложное РАСХОЖДЕНИЕ. Считаем одинаково.
