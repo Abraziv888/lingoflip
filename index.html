@@ -1676,7 +1676,7 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
 <div class="wrap">
 
   <div class="topbar">
-    <div class="logo"><span class="dot"><svg class="logoic" viewBox="0 0 32 32"><use href="#ic-logo"/></svg></span><span class="txt"><span class="ttl-row"><span class="appname">LingoFlip</span><span class="tagcol"><span class="t1"><span class="ru">RU</span> <span class="dash">-</span> <span class="en">EN</span></span><span class="t2">Cards</span></span></span><span class="by"><b>by Abraziv</b> · версия 90</span></span></div>
+    <div class="logo"><span class="dot"><svg class="logoic" viewBox="0 0 32 32"><use href="#ic-logo"/></svg></span><span class="txt"><span class="ttl-row"><span class="appname">LingoFlip</span><span class="tagcol"><span class="t1"><span class="ru">RU</span> <span class="dash">-</span> <span class="en">EN</span></span><span class="t2">Cards</span></span></span><span class="by"><b>by Abraziv</b> · версия 91</span></span></div>
     <button class="profile" id="userPill"><span class="av"><svg class="ic"><use href="#ic-profile"/></svg><span class="medal" id="pillCup" style="display:none"><span class="mn"></span></span><span class="av-warn" id="pillWarn" style="display:none" title="Сессия истекла — войдите снова">!</span></span><span class="nm" id="userName">—</span></button>
   </div>
 
@@ -8623,8 +8623,15 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
                 // стереть облако пустышкой).
                 if(!localHasProgress(name)){
                     const ld = loadUser(name);
-                    clearProgress(ld);
+                    clearProgress(ld);                       // локально и так пусто — чистка безвредна
                     const r = await cloudFetchInto(ld, uid);
+                    if(r && r.error){
+                        // обрыв на скачивании: НИЧЕГО не публикуем — раньше здесь
+                        // cloudPushLeaderboard уезжал с нулями и затирал строку рейтинга
+                        syncTrace('скачивание','ОТМЕНА (пустая локаль): '+((r.error.message)||r.error));
+                        showMsg(elSyncMsg, 'Не удалось скачать из облака. Попробуйте позже.', 'var(--red)');
+                        return;
+                    }
                     saveUser(ld);
                     if(r && r.grammar && typeof gtSetStats==='function') gtSetStats(r.grammar);
                     if(r && r.grammar && typeof gtApplyCloudWeights==='function') gtApplyCloudWeights(r.grammar,'replace');
@@ -8659,19 +8666,48 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
                     if(r && r.grammar && typeof gtApplyCloudWeights==='function') gtApplyCloudWeights(r.grammar,'merge'); // веса заданий: объединить
                     await pushAllToCloud(uid, name);     // объединённое ⊇ облака → upsert безопасен
                     await linkCloudToLocal(deviceLid, name);
-                    try{ if(window.cloudRebaseWeek) await window.cloudRebaseWeek(); }catch(e){} // массовый импорт не должен сыпаться в текущую неделю
+                    // v85: вызов rebase_week здесь УБРАН. Он ставил week_base=games СРАЗУ
+                    // ПОСЛЕ того, как pushAllToCloud опубликовал честную неделю из
+                    // посуточных бакетов, — то есть обнулял игроку неделю до следующего
+                    // пуша. Защита «импорт не сыплется в неделю» давно живёт на клиенте:
+                    // week_base считается из бакетов, а слияние бакетов защищено от
+                    // удвоения. Серверный сброс стал не страховкой, а вредителем.
                     if(typeof user!=='undefined' && user && user.name===name){ user=loadUser(name); applyMode(); }
                     showMsg(elSyncMsg, 'Данные объединены и сохранены ☁️', 'var(--green)');
                 } else if(ch==='replace'){
-                    await deleteCloudUserData(uid);
-                    await pushAllToCloud(uid, name);
+                    // v85: раньше «успех» рапортовался безусловно. Если выгрузка после
+                    // очистки обрывалась — облако оставалось пустым, а человек считал,
+                    // что всё заменилось. Локальные данные целы, так что это излечимо
+                    // повторной синхронизацией — но об этом надо СКАЗАТЬ.
+                    const cleaned = await deleteCloudUserData(uid);
+                    const pushed  = await pushAllToCloud(uid, name);
                     await linkCloudToLocal(deviceLid, name);
-                    try{ if(window.cloudRebaseWeek) await window.cloudRebaseWeek(); }catch(e){}
-                    showMsg(elSyncMsg, 'Данные в облаке заменены ☁️', 'var(--green)');
+                    if(cleaned && pushed){
+                        showMsg(elSyncMsg, 'Данные в облаке заменены ☁️', 'var(--green)');
+                    } else {
+                        syncTrace('замена облака','НЕ ЗАВЕРШЕНА: очистка='+(cleaned?'ok':'ошибка')+' выгрузка='+(pushed?'ok':'ошибка'));
+                        showMsg(elSyncMsg, 'Замена не завершена ('+(cleaned?'':'очистка облака не прошла; ')+(pushed?'':'выгрузка не прошла')+'). Локальные данные целы — нажмите «Синхронизировать» позже.', 'var(--red)');
+                    }
                 } else if(ch==='download'){
+                    // СНАЧАЛА скачиваем в отдельный скелет и проверяем результат, и только
+                    // ПОТОМ заменяем локальные данные. Раньше порядок был обратный
+                    // (clearProgress → fetch → save без проверки): обрыв сети уничтожал
+                    // локальный прогресс, а следом cloudPushLeaderboard публиковал нули,
+                    // затирая и строку рейтинга. Двойное обнуление одним кликом.
+                    const probe = freshUserSkeleton(name);
+                    const r = await cloudFetchInto(probe, uid);
+                    if(r && r.error){
+                        syncTrace('скачивание','ОТМЕНА: '+((r.error.message)||r.error)+' — локальные данные не тронуты');
+                        showMsg(elSyncMsg, 'Не удалось скачать из облака — локальные данные не тронуты. Попробуйте позже.', 'var(--red)');
+                        return;
+                    }
+                    if(((r&&r.weightRows)||0)===0 && ((r&&r.statRows)||0)===0){
+                        showMsg(elSyncMsg, 'В облаке пусто — заменять локальные данные нечем.', 'var(--gold)');
+                        return;
+                    }
                     const ld = loadUser(name);
                     clearProgress(ld);
-                    const r = await cloudFetchInto(ld, uid);
+                    mergeInto(ld, probe, 'max');   // перенос скачанного в очищенный профиль
                     saveUser(ld);
                     // грамматика: заменяем локальную статистику облачной (если она там есть)
                     if(r && r.grammar && typeof gtSetStats==='function') gtSetStats(r.grammar);
@@ -8921,7 +8957,8 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
                 }
                 const ep = await bumpSyncEpoch(name); // другие устройства перейдут в режим «принять эталон»
                 await linkCloudToLocal(ensureLocalId(), name);
-                try{ if(window.cloudRebaseWeek) await window.cloudRebaseWeek(); }catch(e){}
+                // v85: rebase_week убран — см. пояснение в Сценарии 2 (обнулял только что
+                // опубликованную честную неделю; клиентский week_base из бакетов точнее).
                 showMsg(elSyncMsg, ep ? 'Эталон записан. Другие устройства подхватят его при следующем запуске ✓'
                                       : 'Облако перезаписано, но эпоха не поднялась — на других устройствах нажмите «Загрузить из облака».',
                         ep ? 'var(--green)' : 'var(--red)');
@@ -9003,7 +9040,10 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
                     // локальное состояние здесь = только что принятое облачное,
                     // поэтому публикация ничего не затирает. Для нового аккаунта
                     // создаётся строка с нулями — игрок виден в рейтинге до первой игры.
-                    try{ await window.cloudPushLeaderboard(name); }catch(e){}
+                    // НО: если скачивание оборвалось (r.error), локаль может быть пустой
+                    // при непустом облаке — публикация затёрла бы строку нулями. Пропускаем.
+                    if(!(r && r.error)) try{ await window.cloudPushLeaderboard(name); }catch(e){}
+                    else syncTrace('вход','рейтинг не публикуем: скачивание оборвалось ('+((r.error.message)||r.error)+')');
                 }
             } catch (e) { console.warn('Не удалось подтянуть данные из облака:', e); }
 
