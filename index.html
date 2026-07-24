@@ -6147,6 +6147,13 @@ async function buildDiagReport(){
         L.push('  '+padr(m,8)+' игр='+padr(g,4)+' раундов='+padr(o.rounds||0,4)+' пройдено='+padr(seen,4)+' весов='+padr(wts,4)+' время='+Math.round(o.totalTime||0)+'с');
       });
       L.push('СУММА игр локально (уходит в рейтинг): '+localSum);
+      // недельные числа из ЛОКАЛЬНЫХ посуточных бакетов — именно они уходят в
+      // недельный рейтинг (week_base = games − это число). Если здесь 0, а игры
+      // на этой неделе были — бакеты утеряны (профиль пересоздавался) или игры
+      // сыграны на другом устройстве/профиле.
+      try{
+        L.push('НЕДЕЛЯ локально (из бакетов): игр='+weekGamesOf(u)+'  время='+weekTimeOf(u)+'с  +'+weekGreenOf(u)+' −'+weekRedOf(u)+' ✓'+weekLearnedOf(u)+'  (неделя с '+weekStartKey()+')');
+      }catch(e){ L.push('НЕДЕЛЯ локально: не посчиталась — '+e); }
       // v83: рейтинг (cloudPushLeaderboard) прибавляет к сумме ЗАЧЁТНЫЕ игры
       // грамматики (rgames). Диагностика их не учитывала → у игрока с турнирной
       // грамматикой «СВЕРКА игр» показывала ложное РАСХОЖДЕНИЕ. Считаем одинаково.
@@ -6226,6 +6233,18 @@ async function buildDiagReport(){
     if(myUid && !wk.some(r=>r.user_id===myUid))
       L.push('  (твоего аккаунта в зачёте недели нет — за эту неделю ещё нет зачётных игр)');
   }
+  // --- СЫРАЯ ТАБЛИЦА leaderboard: разбор «почему week_games=0» ---
+  const la=d.lbAll;
+  if(la && !la.error && la.length){
+    L.push('');
+    L.push('— ТАБЛИЦА leaderboard (сырые данные, по свежести обновления) —');
+    L.push('  week = games − week_base; week_base==games при свежем updated_at = неделя была сброшена');
+    la.forEach(r=>{
+      const wk=(r.games||0)-(r.week_base||0);
+      let ts=''; try{ const t=new Date(r.updated_at); ts=String(t.getDate()).padStart(2,'0')+'.'+String(t.getMonth()+1).padStart(2,'0')+' '+String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0'); }catch(e){ ts=String(r.updated_at||'?'); }
+      L.push('  '+padr(r.name||'(без имени)',14)+' games='+padr(r.games||0,5)+' week_base='+padr(r.week_base===null||r.week_base===undefined?'—':r.week_base,5)+' week='+padr(wk,4)+' upd='+ts);
+    });
+  } else if(la && la.error){ L.push(''); L.push('таблица leaderboard: ОШИБКА чтения — '+la.error); }
   if(d.lastLbError){ L.push(''); L.push('последняя ошибка записи рейтинга: '+d.lastLbError); }
   // подсказка: если тут не ноль — смотреть кнопку «Журнал ошибок» ниже
   try{ if(typeof appLogCount==='function'){ L.push(''); L.push('записей в журнале ошибок: '+appLogCount()); } }catch(e){}
@@ -7886,6 +7905,15 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
                 const c = await supabase.from('weekly_leaderboard').select('user_id', { count:'exact', head:true });
                 out.weeklyTotal = c.error ? ('ошибка: '+c.error.message) : c.count;
             }catch(e){ out.weeklyTotal = 'ошибка: '+String(e); }
+            // Сырые строки таблицы leaderboard: по games/week_base/updated_at видно,
+            // ПОЧЕМУ у игрока week_games=0 — неделя сброшена (week_base догнал games,
+            // updated_at свежий) или пуши не доезжают (updated_at старый).
+            try{
+                const rawLb = await supabase.from('leaderboard')
+                    .select('user_id,name,games,week_base,updated_at')
+                    .order('updated_at', { ascending:false }).limit(20);
+                out.lbAll = rawLb.error ? { error: rawLb.error.message } : (rawLb.data||[]);
+            }catch(e){ out.lbAll = { error: String(e) }; }
             out.lastLbError = window.__lbLastError ? (window.__lbLastError.message || String(window.__lbLastError)) : null;
             return out;
         };
