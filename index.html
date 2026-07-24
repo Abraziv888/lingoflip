@@ -138,7 +138,9 @@
       return m('Сервер требует капчу, а она в приложении не настроена.');
     if(/row-level security|permission denied|42501/.test(s))
       return m('Сервер отказал в доступе к данным (политика RLS). Прогресс может не сохраниться в облако.');
-    if(/database error|unexpected_failure/.test(s) || status>=500)
+    if(/database error saving new user|database error|unexpected_failure/.test(s))
+      return m('Сервер не смог создать пользователя: сбой в базе данных. Обычно это триггер на auth.users, который пишет в несуществующую таблицу. Регистрация не заработает, пока это не исправлено в Supabase.');
+    if(status>=500)
       return m('Сбой на стороне сервера. Попробуйте позже — подробности записаны в журнал ошибок.');
     return m(raw?('Не удалось выполнить запрос: '+raw):'Неизвестная ошибка — откройте журнал ошибок.');
   };
@@ -1652,7 +1654,7 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
 <div class="wrap">
 
   <div class="topbar">
-    <div class="logo"><span class="dot"><svg class="logoic" viewBox="0 0 32 32"><use href="#ic-logo"/></svg></span><span class="txt"><span class="ttl-row"><span class="appname">LingoFlip</span><span class="tagcol"><span class="t1"><span class="ru">RU</span> <span class="dash">-</span> <span class="en">EN</span></span><span class="t2">Cards</span></span></span><span class="by"><b>by Abraziv</b> · версия 89</span></span></div>
+    <div class="logo"><span class="dot"><svg class="logoic" viewBox="0 0 32 32"><use href="#ic-logo"/></svg></span><span class="txt"><span class="ttl-row"><span class="appname">LingoFlip</span><span class="tagcol"><span class="t1"><span class="ru">RU</span> <span class="dash">-</span> <span class="en">EN</span></span><span class="t2">Cards</span></span></span><span class="by"><b>by Abraziv</b> · версия 90</span></span></div>
     <button class="profile" id="userPill"><span class="av"><svg class="ic"><use href="#ic-profile"/></svg><span class="medal" id="pillCup" style="display:none"><span class="mn"></span></span><span class="av-warn" id="pillWarn" style="display:none" title="Сессия истекла — войдите снова">!</span></span><span class="nm" id="userName">—</span></button>
   </div>
 
@@ -2476,12 +2478,11 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
      локального профиля, привязанного к учётной записи (иначе в рейтинге задвоится). -->
 <div id="regGuardModal" class="qm-overlay hide">
   <div class="qm-card">
-    <div class="qm-title">Перед регистрацией нового аккаунта</div>
+    <div class="qm-title">Новая учётная запись</div>
     <div class="lp-info" id="regGuardInfo"></div>
-    <div class="qm-text">Регистрация создаёт <b>новый</b> аккаунт. Если на устройстве уже есть профиль, привязанный к другой учётной записи, его данные уйдут в рейтинг под новым аккаунтом — и появится <b>дубль</b>. Сначала сохраните текущий прогресс (если нужен) и выйдите из профиля.</div>
+    <div class="qm-text">Приложение создаст аккаунт и сразу войдёт под ним. На устройстве живёт <b>один</b> локальный профиль, поэтому текущий будет заменён — <b>прогресс из него не переносится</b>. Если он нужен, нажмите «Отмена» и сохраните его в файл: «Сохранить / загрузить прогресс».</div>
     <div class="qm-col">
-      <button class="btn block" id="regGuardSync"><svg class="ic"><use href="#ic-upload"/></svg>Синхронизировать данные</button>
-      <button class="btn danger block" id="regGuardExit"><svg class="ic"><use href="#ic-x"/></svg>Выйти из профиля и продолжить</button>
+      <button class="btn block" id="regGuardGo"><svg class="ic"><use href="#ic-check"/></svg><span id="regGuardGoLabel">Создать новую учётную запись</span></button>
       <button class="btn ghost block" id="regGuardCancel" style="margin-top:2px"><svg class="ic"><use href="#ic-chevl"/></svg>Отмена</button>
     </div>
     <div class="qm-msg" id="regGuardMsg"></div>
@@ -8874,89 +8875,119 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
             refreshEntry(null);
         };
 
-        // ===== ЗАЩИТА ПЕРЕД РЕГИСТРАЦИЕЙ НОВОГО АККАУНТА =====
-        // Дубли в рейтинге возникали так: при регистрации НОВОГО аккаунта, пока на
-        // устройстве оставался локальный профиль (например, «Abraziv777»), его имя и
-        // статистика уходили в рейтинг под новым user_id → одно имя под двумя
-        // аккаунтами. Решение: регистрация всегда начинается с «чистого» устройства.
+        // ===== СОЗДАНИЕ НОВОЙ УЧЁТНОЙ ЗАПИСИ =====
+        // Зачем окно-подтверждение: дубли в рейтинге возникали так — новый аккаунт
+        // создавался, пока на устройстве оставался старый локальный профиль, и его
+        // имя со статистикой уезжало в рейтинг под новым user_id (одно имя у двух
+        // аккаунтов). Поэтому старый профиль удаляется, а человека предупреждают.
         window.cloudSignOut = async () => { try{ await supabase.auth.signOut(); }catch(e){} };
 
-        function regBtnFor(src){ return src==='entry'?$('#entry-register'):src==='modal'?$('#modal-register'):$('#btn-register'); }
-        function regMsgFor(src){ return src==='entry'?elEntryMsg:src==='modal'?$('#modal-auth-msg'):elErrorMsg; }
         function regCredsFor(src){
             return src==='entry' ? readCreds($('#entry-username'),$('#entry-password'),elEntryMsg)
                  : src==='modal' ? readCreds($('#modal-username'),$('#modal-password'),$('#modal-auth-msg'))
                  :                 readCreds($('#auth-username'),$('#auth-password'),elErrorMsg);
         }
-        // полная очистка локального профиля БЕЗ перезагрузки (+ выход из облака и токенов)
-        async function wipeLocalForRegister(){
-            try{ await supabase.auth.signOut(); }catch(e){}
+        // Полная очистка ЛОКАЛЬНОГО профиля. Ключи сессии (sb-*) НЕ трогаем:
+        // функция вызывается уже ПОСЛЕ создания аккаунта, и удаление токенов
+        // выкинуло бы человека из только что созданной учётной записи.
+        function wipeLocalProfile(){
             try{
                 for(let i=localStorage.length-1;i>=0;i--){ const k=localStorage.key(i);
-                    if(k && (k.indexOf('wm2_user_')===0 || k.indexOf('sb-')===0 || k.indexOf('supabase')!==-1)) localStorage.removeItem(k); }
-            }catch(e){}
+                    if(k && k.indexOf('wm2_user_')===0) localStorage.removeItem(k); }
+            }catch(e){ appLogErr('регистрация','не удалось очистить локальный профиль', e); }
             ['wm2_players','wm2_current','wm2_localid','wm2_linked','wm2_lastsync'].forEach(k=>{ try{ localStorage.removeItem(k); }catch(e){} });
-            try{ if(typeof user!=='undefined') user=null; }catch(e){}
-            updateAuthUI(null); refreshEntry(null);
-        }
-        // финальная регистрация на «чистом» устройстве: создаём аккаунт и заходим под
-        // профилем = логин (имя в рейтинге совпадёт с аккаунтом — дублей не будет)
-        async function finishRegister(creds, msgEl){
-            const res = await doRegister(creds, msgEl);
-            if(!res) return false;
-            updateAuthUI(res.user);
-            const am=$('#authModal'); if(am) am.classList.add('hide');
-            await cloudEnter(creds.username);
-            return true;
+            try{ user=null; }catch(e){}
         }
 
         let __pendingReg = null;
-        function openRegGuard(localName, linked){
+
+        function openRegGuard(localName){
             const info=$('#regGuardInfo');
             if(info){
-                let h='<div class="lp-name">На устройстве есть профиль «'+escHtml(localName)+'»</div>';
-                h += linked
-                    ? '<div class="lp-status ok">✓ Профиль связан с учётной записью. Синхронизируйте его, чтобы прогресс сохранился, затем выйдите.</div>'
-                    : '<div class="lp-status warn">⚠ Профиль не связан с аккаунтом. Если данные нужны — сохраните их (синхронизация/файл) перед выходом, иначе они будут потеряны.</div>';
-                info.innerHTML=h;
+                info.innerHTML = localName
+                    ? '<div class="lp-name">На устройстве есть профиль «'+escHtml(localName)+'»</div>'+
+                      '<div class="lp-status warn">⚠ Он будет удалён с устройства после того, как новый аккаунт создастся. Данные из него в новую запись не переносятся.</div>'
+                    : '<div class="lp-status ok">✓ Локального профиля нет — терять нечего.</div>';
             }
             setRegGuardMsg('');
+            regGuardBusy(false);
             const m=$('#regGuardModal'); if(m) m.classList.remove('hide');
         }
         function closeRegGuard(){ const m=$('#regGuardModal'); if(m) m.classList.add('hide'); }
         function setRegGuardMsg(t,c){ const m=$('#regGuardMsg'); if(m){ m.style.color=c||'var(--muted)'; m.textContent=t||''; } }
 
-        async function requestRegister(src){
-            const creds = regCredsFor(src); if(!creds) return;
-            const localName = localStorage.getItem('wm2_current');
-            if(localName){
-                __pendingReg = { creds, msgEl: regMsgFor(src) };
-                openRegGuard(localName, localStorage.getItem('wm2_linked')==='1');
-                return;
+        // Блокировка кнопок на время запроса. Меняем ТОЛЬКО текст внутри <span>:
+        // busy() писал в textContent всей кнопки и затирал <svg> с иконкой навсегда.
+        function regGuardBusy(on, label){
+            const go=$('#regGuardGo'), cancel=$('#regGuardCancel'), lab=$('#regGuardGoLabel');
+            if(go) go.disabled=!!on;
+            if(cancel) cancel.disabled=!!on;
+            if(lab){
+                if(on){ if(!lab.dataset.txt) lab.dataset.txt=lab.textContent; lab.textContent=label||'Создаю…'; }
+                else if(lab.dataset.txt){ lab.textContent=lab.dataset.txt; }
             }
-            const btn=regBtnFor(src); busy(btn,true,'...');
-            try{ await finishRegister(creds, regMsgFor(src)); } finally{ busy(btn,false); }
         }
 
-        if($('#regGuardCancel')) $('#regGuardCancel').onclick = ()=>{ __pendingReg=null; closeRegGuard(); };
-        if($('#regGuardModal'))  $('#regGuardModal').addEventListener('click', e=>{ if(e.target.id==='regGuardModal'){ __pendingReg=null; closeRegGuard(); } });
-        if($('#regGuardSync'))   $('#regGuardSync').onclick = async ()=>{
-            const btn=$('#regGuardSync'); busy(btn,true,'Синхронизация...');
+        // ЕДИНСТВЕННЫЙ путь создания аккаунта. Порядок шагов критичен:
+        //   1) выходим из чужой сессии — локальные данные при этом целы;
+        //   2) создаём аккаунт; ошибку показываем ЗДЕСЬ ЖЕ, в окне, ничего не удалив;
+        //   3) и только после успеха стираем старый локальный профиль и входим.
+        // Раньше было наоборот (сначала стереть, потом регистрировать): при занятом
+        // логине или обрыве сети прогресс уже был уничтожен, аккаунт не создан, а
+        // текст ошибки уходил в элемент на другом экране — снаружи это выглядело
+        // как «кнопка ничего не делает».
+        async function runFreshRegister(){
+            if(!__pendingReg){ closeRegGuard(); return; }
+            const creds = __pendingReg.creds;
+            regGuardBusy(true,'Создаю…');
+            setRegGuardMsg('Создаю учётную запись…','var(--muted)');
             try{
-                const r = window.cloudSyncNow ? await window.cloudSyncNow() : {ok:false};
-                if(r && r.ok)            setRegGuardMsg('Данные синхронизированы ✓. Теперь можно выйти и продолжить.', 'var(--green)');
-                else if(r && r.needAuth) setRegGuardMsg('Чтобы синхронизировать, сначала войдите в свой аккаунт (или сохраните прогресс в файл).', 'var(--gold)');
-                else                     setRegGuardMsg('Не удалось синхронизировать. Сохраните прогресс в файл перед выходом.', 'var(--red)');
-            } finally { busy(btn,false); }
-        };
-        if($('#regGuardExit')) $('#regGuardExit').onclick = async ()=>{
-            const btn=$('#regGuardExit'); busy(btn,true,'...');
-            try{
-                await wipeLocalForRegister();
+                try{ await supabase.auth.signOut(); }
+                catch(e){ appLogWarn('регистрация','не удалось выйти из старой сессии', e); }
+
+                // doRegister пишет текст через showMsg, а тот сам стирает сообщение
+                // через 4.5 с. Поэтому подставляем «карман» и переносим текст в окно,
+                // где он висит до следующего действия.
+                const sink = document.createElement('div');
+                const res = await doRegister(creds, sink);
+                try{ clearTimeout(sink._t); }catch(e){}
+                if(!res){
+                    setRegGuardMsg(sink.textContent || 'Не удалось создать учётную запись — подробности в журнале ошибок.', sink.style.color || 'var(--red)');
+                    appLogErr('регистрация','аккаунт не создан, локальные данные не тронуты','логин: '+creds.username);
+                    return;                      // окно НЕ закрываем: человек видит причину
+                }
+
+                wipeLocalProfile();              // старый профиль убираем только теперь
+                __pendingReg = null;
+                updateAuthUI(res.user);
+                const am=$('#authModal'); if(am) am.classList.add('hide');
+                setRegGuardMsg('Аккаунт создан ✓ Входим…','var(--green)');
                 closeRegGuard();
-                if(__pendingReg){ const {creds,msgEl}=__pendingReg; __pendingReg=null; await finishRegister(creds, msgEl); }
-            } finally { busy(btn,false); }
-        };
+                await cloudEnter(creds.username); // заведёт локальный профиль по логину и уйдёт на home
+                appLogInfo('регистрация','аккаунт создан и выполнен вход','логин: '+creds.username);
+            }catch(e){
+                const ex=explainAuthError(e);
+                appLogErr('регистрация', e, 'логин: '+creds.username);
+                const m=$('#regGuardModal'); if(m) m.classList.remove('hide'); // сбой мог случиться уже после закрытия
+                setRegGuardMsg(ex.msg, ex.tone);
+            } finally { regGuardBusy(false); }
+        }
+
+        // Кнопка «Регистрация» на любом из трёх экранов ведёт сюда.
+        // Логин/пароль проверяются ДО открытия окна — сообщение о плохом логине
+        // появляется прямо под полями, а не в модалке.
+        function requestRegister(src){
+            const creds = regCredsFor(src); if(!creds) return;
+            __pendingReg = { creds, src };
+            openRegGuard(localStorage.getItem('wm2_current'));
+        }
+
+        if($('#regGuardGo'))     $('#regGuardGo').onclick     = runFreshRegister;
+        if($('#regGuardCancel')) $('#regGuardCancel').onclick = ()=>{ __pendingReg=null; closeRegGuard(); };
+        if($('#regGuardModal'))  $('#regGuardModal').addEventListener('click', e=>{
+            const go=$('#regGuardGo');
+            if(e.target.id==='regGuardModal' && !(go&&go.disabled)){ __pendingReg=null; closeRegGuard(); }
+        });
 
         // перенаправляем ВСЕ кнопки регистрации через защиту (переопределяя прежние обработчики)
         if($('#btn-register'))   $('#btn-register').onclick   = ()=>requestRegister('settings');
