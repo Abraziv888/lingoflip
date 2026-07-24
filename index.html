@@ -104,6 +104,28 @@
 
   document.addEventListener('DOMContentLoaded', badge);
 
+  // ---- ТРАССИРОВКА ОБЛАЧНЫХ ОПЕРАЦИЙ ----
+  // Отдельный кольцевой журнал СТАДИЙ (не ошибок): старт/итог выгрузки,
+  // путь записи рейтинга (update/insert/блок RLS), вызовы ensure_week,
+  // ручная синхронизация. Смотреть: диагностика, секция «ТРАССИРОВКА».
+  var TKEY='wm2_synctrace', TMAX=120, tbuf=[];
+  try{ tbuf=JSON.parse(localStorage.getItem(TKEY)||'[]'); if(!Array.isArray(tbuf)) tbuf=[]; }catch(e){ tbuf=[]; }
+  function tsave(){ try{ localStorage.setItem(TKEY, JSON.stringify(tbuf)); }catch(e){} }
+  window.syncTrace = function(stage, detail){
+    try{
+      tbuf.push({ t: ts(), s: String(stage||'-'), d: str(detail) });
+      if(tbuf.length>TMAX) tbuf=tbuf.slice(-TMAX);
+      tsave();
+    }catch(e){}
+  };
+  window.syncTraceText = function(n){
+    n = n||25;
+    if(!tbuf.length) return '(пусто — облачных операций ещё не было)';
+    return tbuf.slice(-n).map(function(r){ return '['+r.t+'] '+r.s+': '+r.d; }).join('\n');
+  };
+  window.syncTraceCount = function(){ return tbuf.length; };
+  window.syncTraceClear = function(){ tbuf=[]; tsave(); };
+
   // ================= РАСШИФРОВКА ОШИБОК SUPABASE =================
   // Supabase отвечает английскими кодами; здесь они превращаются в текст,
   // который что-то говорит пользователю. Возвращает {msg, tone, code, raw}.
@@ -2666,6 +2688,12 @@ if(typeof window.appLogErr!=='function'){
   window.appLog=window.appLogErr=window.appLogWarn=window.appLogInfo=function(){};
   window.appLogGet=function(){return [];}; window.appLogCount=function(){return 0;};
   window.appLogClear=function(){}; window.appLogText=function(){return 'Журнал недоступен.';};
+}
+if(typeof window.syncTrace!=='function'){
+  window.syncTrace=function(){};
+  window.syncTraceText=function(){return '(трассировка недоступна)';};
+  window.syncTraceCount=function(){return 0;};
+  window.syncTraceClear=function(){};
 }
 if(typeof window.explainAuthError!=='function'){
   window.explainAuthError=function(e){
@@ -6121,6 +6149,16 @@ async function buildDiagReport(){
   L.push('=== LingoFlip — диагностика ===');
   if(ver) L.push(ver);
   L.push('время отчёта: '+new Date().toLocaleString());
+  // --- ОКРУЖЕНИЕ ---
+  try{
+    const env=[];
+    if(typeof navigator!=='undefined'){
+      env.push('сеть: '+(navigator.onLine?'онлайн':'ОФЛАЙН'));
+      try{ env.push('SW: '+((navigator.serviceWorker&&navigator.serviceWorker.controller)?'управляет страницей':'не активен')); }catch(e){}
+    }
+    try{ let b=0; for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); b+=(k?k.length:0)+((localStorage.getItem(k)||'').length); } env.push('localStorage: '+(b/1024).toFixed(1)+' КБ'); }catch(e){}
+    if(env.length) L.push(env.join(' · '));
+  }catch(e){}
   L.push('');
 
   // --- ЛОКАЛЬНО ---
@@ -6153,6 +6191,15 @@ async function buildDiagReport(){
       // сыграны на другом устройстве/профиле.
       try{
         L.push('НЕДЕЛЯ локально (из бакетов): игр='+weekGamesOf(u)+'  время='+weekTimeOf(u)+'с  +'+weekGreenOf(u)+' −'+weekRedOf(u)+' ✓'+weekLearnedOf(u)+'  (неделя с '+weekStartKey()+')');
+        // посуточные бакеты за 7 дней: если тут нули, а игры были — бакеты утеряны
+        if(typeof dayKey==='function'){
+          const days=[]; for(let i=6;i>=0;i--) days.push(dayKey(new Date(Date.now()-i*86400000)));
+          const modes=[u,u.phr,u.pairs,u.verbs,u.verbsTop,u.verbsIrr,u.verbsPair];
+          const sumDay=(f,d)=>{ let n=0; modes.forEach(o=>{ if(o&&o[f]&&o[f][d]) n+=(+o[f][d]||0); }); return n; };
+          L.push('бакеты за 7 дней (день: игр / минут):');
+          days.forEach(d=>{ const g=sumDay('dailyGames',d), t=Math.round(sumDay('dailyTime',d)/60); if(g||t) L.push('  '+d+': '+g+' / '+t); });
+          if(!days.some(d=>sumDay('dailyGames',d)||sumDay('dailyTime',d))) L.push('  (все дни пустые)');
+        }
       }catch(e){ L.push('НЕДЕЛЯ локально: не посчиталась — '+e); }
       // v83: рейтинг (cloudPushLeaderboard) прибавляет к сумме ЗАЧЁТНЫЕ игры
       // грамматики (rgames). Диагностика их не учитывала → у игрока с турнирной
@@ -6204,6 +6251,13 @@ async function buildDiagReport(){
     else{ L.push('user_stats:'); us.forEach(r=> L.push('  '+padr(r.mode_name||'?',8)+' игр='+padr(r.games,4)+' раундов='+padr(r.rounds,4)+' слов='+padr(r.words,4)+' время='+padr(r.total_time,5)+'с upd='+r.updated_at)); }
     L.push('user_progress (весов в облаке): '+d.user_progress_count);
   }
+  // --- СХЕМА И СВЯЗЬ ---
+  L.push('');
+  L.push('— СХЕМА ОБЛАКА И СВЯЗЬ —');
+  if(d.pingMs!==undefined) L.push('пинг до базы: '+(d.pingMs===null?'нет ответа':d.pingMs+' мс')+(d.lbTotal!==null&&d.lbTotal!==undefined?('  ·  игроков в leaderboard: '+d.lbTotal):''));
+  if(d.schemaDaily!==undefined) L.push('user_stats: daily-бакеты '+d.schemaDaily+(String(d.schemaDaily).indexOf('НЕТ')===0?'  ← недельные бакеты НЕ сохраняются в облако! (SQL lingoflip_user_stats_buckets)':''));
+  if(d.schemaWeek!==undefined)  L.push('leaderboard: недельные колонки '+d.schemaWeek);
+
   // --- РЕЙТИНГ ТЕКУЩЕЙ НЕДЕЛИ (что реально лежит в базе прямо сейчас) ---
   L.push('');
   L.push('— РЕЙТИНГ ТЕКУЩЕЙ НЕДЕЛИ (weekly_leaderboard) —');
@@ -6246,6 +6300,14 @@ async function buildDiagReport(){
     });
   } else if(la && la.error){ L.push(''); L.push('таблица leaderboard: ОШИБКА чтения — '+la.error); }
   if(d.lastLbError){ L.push(''); L.push('последняя ошибка записи рейтинга: '+d.lastLbError); }
+  // --- ТРАССИРОВКА ОБЛАЧНЫХ ОПЕРАЦИЙ (последние 25) ---
+  try{
+    if(typeof syncTraceText==='function'){
+      L.push('');
+      L.push('— ТРАССИРОВКА ОБЛАЧНЫХ ОПЕРАЦИЙ (последние 25 из '+((typeof syncTraceCount==='function')?syncTraceCount():'?')+') —');
+      L.push(syncTraceText(25));
+    }
+  }catch(e){}
   // подсказка: если тут не ноль — смотреть кнопку «Журнал ошибок» ниже
   try{ if(typeof appLogCount==='function'){ L.push(''); L.push('записей в журнале ошибок: '+appLogCount()); } }catch(e){}
   return L.join('\n');
@@ -7727,7 +7789,7 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
                     else { rowMissing = true; }            // под нашим uid строки ещё нет
                     break;
                 }
-                if(updatedExisting) return true;
+                if(updatedExisting){ syncTrace('рейтинг','update ok: games='+full.games+' неделя='+(full.games-full.week_base)+' время(нед)='+secs+'с'); return true; }
 
                 // 2) UPDATE затронул 0 строк. Две причины:
                 //    а) строки под нашим uid действительно ещё нет  → нужна ВСТАВКА;
@@ -7746,6 +7808,7 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
 
                     if(exists){
                         // строка есть, но UPDATE её не тронул → точно нет RLS-политики UPDATE
+                        syncTrace('рейтинг','БЛОК: строка есть, но UPDATE трогает 0 строк (нет политики RLS UPDATE)');
                         window.__lbLastError = { message:
                             'RLS: для таблицы «leaderboard» отсутствует политика UPDATE — ' +
                             'строка существующего игрока не обновляется. Выполните SQL-скрипт ' +
@@ -7754,7 +7817,7 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
                         // строки действительно нет → ВСТАВКА (главный путь для новых игроков)
                         for(const cols of colSets){
                             const { error } = await supabase.from('leaderboard').insert({ user_id: uid, ...pick(cols) });
-                            if(!error) return true;
+                            if(!error){ syncTrace('рейтинг','insert ok: новая строка, games='+full.games); return true; }
                             if(isColErr(error)) continue;
                             // гонка: строку успели вставить между SELECT и INSERT → запасной upsert
                             if(/duplicate|conflict|unique|exists/i.test(error.message||'')){
@@ -7773,6 +7836,7 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
 
                 if(window.__lbLastError){
                     const m = window.__lbLastError.message || window.__lbLastError;
+                    syncTrace('рейтинг','ОШИБКА: '+m);
                     console.warn('Рейтинг: запись в leaderboard не прошла. ' +
                         'Если новые игроки добавляются, а существующие не обновляются — на сервере, ' +
                         'скорее всего, отсутствует RLS-политика UPDATE для таблицы «leaderboard». ' +
@@ -7807,7 +7871,8 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
         window.cloudEnsureWeek = async () => {
             if(__weekRolled) return;
             __weekRolled = true;
-            try{ await supabase.rpc('ensure_week'); }catch(e){ /* функции может не быть — не критично */ }
+            try{ await supabase.rpc('ensure_week'); syncTrace('неделя','ensure_week выполнена (раз за сессию)'); }
+            catch(e){ syncTrace('неделя','ensure_week недоступна: '+((e&&e.message)||e)); }
         };
 
         // Недельный рейтинг (витрина weekly_leaderboard): топ-20 за текущую неделю.
@@ -7847,15 +7912,18 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
         // Ручная синхронизация по кнопке на главном/результатах.
         // Возвращает {ok} при успехе, {needAuth:true} если нет сессии.
         window.cloudSyncNow = async () => {
+            const __t0=Date.now();
             try{
                 const { data:{ session } } = await supabase.auth.getSession();
-                if(!session || !session.user) return { needAuth:true };
+                if(!session || !session.user){ syncTrace('синхронизация','нет сессии — нужен вход'); return { needAuth:true }; }
                 const name = localStorage.getItem('wm2_current');
-                if(!name) return { ok:false };
+                if(!name){ syncTrace('синхронизация','нет локального профиля'); return { ok:false }; }
+                syncTrace('синхронизация','старт (кнопка): '+name);
                 await twoWaySync(session.user.id, name);        // pull → merge → push (не затираем другое устройство)
                 await linkCloudToLocal(ensureLocalId(), name);  // обновит флаг связки и время
+                syncTrace('синхронизация','успех за '+(Date.now()-__t0)+'мс');
                 return { ok:true, time: Date.now() };
-            }catch(e){ console.warn('Синхронизация не удалась:', e); return { ok:false, error:e }; }
+            }catch(e){ syncTrace('синхронизация','ОШИБКА: '+((e&&e.message)||e)); console.warn('Синхронизация не удалась:', e); return { ok:false, error:e }; }
         };
 
         // Обновление имени человека на сервере (имя локальной записи), если есть сессия.
@@ -7895,6 +7963,23 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
                     } catch(e){ out.user_progress_count = 'ошибка: '+String(e); }
                 }
             } catch(e) { out.error = String(e); }
+            // Пинг до базы + проверка схемы: есть ли в облаке колонки, от которых
+            // зависит недельный рейтинг. Отсутствие daily-колонок в user_stats —
+            // причина «бакеты живут только в телефоне и гибнут с профилем».
+            try{
+                const t0=Date.now();
+                const c=await supabase.from('leaderboard').select('user_id',{ count:'exact', head:true });
+                out.pingMs = Date.now()-t0;
+                out.lbTotal = c.error ? null : c.count;
+            }catch(e){ out.pingMs = null; }
+            try{
+                const pr=await supabase.from('user_stats').select('daily_games,daily_time,daily_learned').limit(1);
+                out.schemaDaily = pr.error ? ('НЕТ ('+(pr.error.message||'').slice(0,80)+')') : 'есть';
+            }catch(e){ out.schemaDaily = 'НЕТ ('+String(e).slice(0,80)+')'; }
+            try{
+                const pw=await supabase.from('leaderboard').select('week_base,week_green,week_red,week_learned').limit(1);
+                out.schemaWeek = pw.error ? ('НЕТ ('+(pw.error.message||'').slice(0,80)+')') : 'есть';
+            }catch(e){ out.schemaWeek = 'НЕТ ('+String(e).slice(0,80)+')'; }
             // Недельный рейтинг из базы — сессия для чтения витрины не нужна.
             // weekly: топ-20 С НЕНУЛЕВЫМИ играми (ровно то, что видит экран рейтинга);
             // weeklyTotal: сколько строк в витрине всего (включая нули после сброса недели).
@@ -8274,8 +8359,10 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
         // навсегда (счётчики считались «уже в облаке», хотя туда не доехали).
         // Теперь база сдвигается ТОЛЬКО при успешной выгрузке весов и статистики.
         async function pushAllToCloud(uid, name){
-            const raw = localStorage.getItem('wm2_user_'+name); if(!raw) return false;
-            let u; try{ u=JSON.parse(raw); }catch(e){ return false; }
+            const raw = localStorage.getItem('wm2_user_'+name); if(!raw){ syncTrace('выгрузка','отменена: нет локального профиля '+name); return false; }
+            let u; try{ u=JSON.parse(raw); }catch(e){ syncTrace('выгрузка','отменена: профиль не читается'); return false; }
+            const __t0=Date.now();
+            syncTrace('выгрузка','старт: '+name);
             let wOk = true, sOk = true;
             const wRows = buildWeightRows(uid, u);
             if(wRows.length){
@@ -8284,6 +8371,7 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
                     if(error){ wOk=false; console.warn('Веса: выгрузка не удалась:', error.message||error); }
                 }catch(e){ wOk=false; console.warn('Веса: выгрузка не удалась:', e); }
             }
+            syncTrace('выгрузка','веса: '+(wRows.length?(wOk?'ok, '+wRows.length+' строк':'ОШИБКА (см. журнал)'):'нечего выгружать'));
             const sRows = buildStatsRows(uid, u);
             if(sRows.length){
                 try{
@@ -8291,10 +8379,12 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
                     if(error){ sOk=false; console.warn('Статистика: выгрузка не удалась:', error.message||error); }
                 }catch(e){ sOk=false; console.warn('Статистика: выгрузка не удалась:', e); }
             }
+            syncTrace('выгрузка','статистика: '+(sRows.length?(sOk?'ok, '+sRows.length+' режимов':'ОШИБКА (см. журнал)'):'нечего выгружать'));
             try{ await window.cloudPushGrammar(); }catch(e){}   // прогресс теста грамматики (отдельная строка, изолировано)
             try{ await cloudPushSettings(uid, name, u); }catch(e){}  // выбор наборов (v82)
             try{ await window.cloudPushLeaderboard(name); }catch(e){}
             if(wOk && sOk){ try{ setSyncBase(name); }catch(e){} } // дельта-база = текущее состояние (теперь оно ДЕЙСТВИТЕЛЬНО в облаке)
+            syncTrace('выгрузка','итог: '+(wOk&&sOk?'успех':'С ОШИБКАМИ')+' за '+(Date.now()-__t0)+'мс');
             return wOk && sOk;
         }
         // ===== ДВУСТОРОННЯЯ СИНХРОНИЗАЦИЯ (pull → merge → push) =====
