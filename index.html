@@ -10,6 +10,140 @@
      никогда не осталась скрытой. -->
 <style id="preboot-style">html.preboot{background:#131f24}html.preboot body{opacity:0}body{transition:opacity .28s ease}</style>
 <script>document.documentElement.classList.add('preboot');</script>
+
+<!-- ЖУРНАЛ ОШИБОК (v84). Подключён САМЫМ ПЕРВЫМ, чтобы ловить сбои уже на
+     этапе загрузки (не загрузился словарь, упал скрипт и т.п.).
+     Смотреть: Настройки → Профиль и данные → «Журнал ошибок».
+     Хранится в localStorage (ключ wm2_errlog), последние 200 записей —
+     переживает перезагрузку и закрытие PWA, это важно для телефона, где
+     консоль браузера недоступна.
+       appLogErr(где, что, детали)  — записать ошибку вручную
+       appLogText() / appLogGet() / appLogClear()
+       explainAuthError(err)        — код Supabase → понятный текст -->
+<script>
+(function(){
+  var KEY='wm2_errlog', MAX=200, buf=[];
+  try{ buf=JSON.parse(localStorage.getItem(KEY)||'[]'); if(!Array.isArray(buf)) buf=[]; }catch(e){ buf=[]; }
+  function save(){ try{ localStorage.setItem(KEY, JSON.stringify(buf)); }catch(e){} }
+  function p2(n){ n=String(n); return n.length<2?('0'+n):n; }
+  function ts(){ var d=new Date(); return p2(d.getDate())+'.'+p2(d.getMonth()+1)+' '+p2(d.getHours())+':'+p2(d.getMinutes())+':'+p2(d.getSeconds()); }
+
+  // Любое значение (строка, Error, объект ошибки Supabase) -> читаемый текст.
+  function str(v){
+    if(v===undefined) return '';
+    if(v===null) return 'null';
+    if(typeof v==='string') return v;
+    if(typeof v!=='object') return String(v);
+    if(v instanceof Error){
+      var head=(v.name||'Error')+': '+(v.message||'');
+      var st=v.stack?String(v.stack).split('\n').slice(1,3).join(' | ').trim():'';
+      return st?(head+' | '+st):head;
+    }
+    try{
+      var o={}, keys=['message','msg','code','error_code','status','details','hint','name'];
+      for(var i=0;i<keys.length;i++){ var k=keys[i]; if(v[k]!==undefined && v[k]!==null && v[k]!=='') o[k]=v[k]; }
+      var s=JSON.stringify(Object.keys(o).length?o:v);
+      return (s && s!=='{}')?s:String(v);
+    }catch(e){ return String(v); }
+  }
+
+  function badge(){
+    try{ var b=document.getElementById('logBtnLabel');
+         if(b) b.textContent = buf.length?('Журнал ошибок ('+buf.length+')'):'Журнал ошибок'; }catch(e){}
+  }
+
+  // lv: 'ERR' | 'WARN' | 'INFO'; where — место в приложении ('регистрация', 'облако'…)
+  function log(lv, where, what, extra){
+    var rec={ t:ts(), lv:lv||'ERR', w:where||'-', m:str(what), x:(extra===undefined?'':str(extra)) };
+    buf.push(rec);
+    if(buf.length>MAX) buf=buf.slice(-MAX);
+    save(); badge();
+    return rec;
+  }
+  window.appLog      = log;
+  window.appLogErr   = function(w,m,x){ return log('ERR',w,m,x); };
+  window.appLogWarn  = function(w,m,x){ return log('WARN',w,m,x); };
+  window.appLogInfo  = function(w,m,x){ return log('INFO',w,m,x); };
+  window.appLogGet   = function(){ return buf.slice(); };
+  window.appLogCount = function(){ return buf.length; };
+  window.appLogClear = function(){ buf=[]; save(); badge(); };
+  window.appLogText  = function(){
+    if(!buf.length) return 'Журнал пуст — ошибок не записано.\n\nСюда попадают сбои входа и регистрации, обрывы связи\nс облаком и любые ошибки скриптов. Если что-то пошло\nне так — вернитесь сюда и нажмите «Обновить».';
+    var head='=== LingoFlip — журнал ошибок ===\nЗаписей: '+buf.length+' (хранятся последние '+MAX+')\n\n';
+    return head+buf.map(function(r){
+      return '['+r.t+'] '+r.lv+' · '+r.w+'\n    '+r.m+(r.x?('\n    '+r.x):'');
+    }).join('\n\n');
+  };
+
+  // ---- автоматический перехват ----
+  window.addEventListener('error', function(e){
+    // не загрузился внешний файл (словарь, картинка, стиль)
+    if(e && e.target && e.target!==window && e.target.tagName){
+      log('ERR','загрузка файла', (e.target.tagName||'')+' не загрузился', e.target.src||e.target.href||'');
+      return;
+    }
+    log('ERR','скрипт', (e&&e.message)||'ошибка выполнения', e?((e.filename||'')+':'+(e.lineno||0)):'');
+  }, true);
+
+  window.addEventListener('unhandledrejection', function(e){
+    log('ERR','promise', (e&&e.reason)||'необработанный сбой');
+  });
+
+  // console.error / console.warn — чтобы уже существующие в коде
+  // предупреждения тоже попадали в журнал, без правки каждого места
+  ['error','warn'].forEach(function(name){
+    var orig = console[name] ? console[name].bind(console) : function(){};
+    console[name] = function(){
+      try{
+        var a=Array.prototype.slice.call(arguments).map(str).join(' ');
+        if(a) log(name==='error'?'ERR':'WARN','console', a);
+      }catch(e){}
+      try{ orig.apply(null, arguments); }catch(e){}
+    };
+  });
+
+  document.addEventListener('DOMContentLoaded', badge);
+
+  // ================= РАСШИФРОВКА ОШИБОК SUPABASE =================
+  // Supabase отвечает английскими кодами; здесь они превращаются в текст,
+  // который что-то говорит пользователю. Возвращает {msg, tone, code, raw}.
+  window.explainAuthError = function(err){
+    var raw    = (err && (err.message||err.msg)) || (typeof err==='string'?err:'') || '';
+    var code   = (err && (err.code||err.error_code)) || '';
+    var status = (err && (err.status||err.statusCode)) || 0;
+    var s      = (code+' '+raw).toLowerCase();
+    function m(text, tone){ return { msg:text, tone:tone||'var(--red)', code:(code||status||'—'), raw:raw }; }
+
+    if(/failed to fetch|networkerror|network request failed|load failed|err_internet/.test(s))
+      return m('Нет связи с сервером. Проверьте интернет; запрос могли заблокировать VPN, антивирус или расширение браузера.');
+    if(/user_already_exists|already registered|already been registered/.test(s))
+      return m('Такой логин уже занят — нажмите «Войти».');
+    if(/email_address_invalid|unable to validate email|invalid format|email_address_not_authorized/.test(s))
+      return m('Сервер не принял логин: из него строится технический адрес. Используйте только латинские буквы, цифры и «_» (кириллица и символы не подойдут).');
+    if(/leaked|pwned|known to be weak/.test(s))
+      return m('Такой пароль встречается в утечках, сервер его запрещает. Придумайте другой.');
+    if(/weak_password|password should be|password is too short/.test(s))
+      return m('Пароль слишком простой: нужно минимум 6 символов.');
+    if(/email_not_confirmed|not confirmed/.test(s))
+      return m('Адрес аккаунта не подтверждён. В Supabase нужно выключить Confirm email (Authentication → Providers → Email).','var(--gold)');
+    if(/invalid_credentials|invalid login credentials/.test(s))
+      return m('Неверный логин или пароль.');
+    if(/signup_disabled|signups not allowed|email_provider_disabled/.test(s))
+      return m('Регистрация новых аккаунтов на сервере выключена.');
+    if(status===429 || /over_email_send_rate_limit|over_request_rate_limit|rate limit|too many requests|only request this after/.test(s))
+      return m('Слишком много попыток подряд. Подождите минуту и попробуйте снова.','var(--gold)');
+    if(/session_not_found|refresh_token|jwt expired/.test(s))
+      return m('Сессия устарела. Войдите в аккаунт заново.','var(--gold)');
+    if(/captcha/.test(s))
+      return m('Сервер требует капчу, а она в приложении не настроена.');
+    if(/row-level security|permission denied|42501/.test(s))
+      return m('Сервер отказал в доступе к данным (политика RLS). Прогресс может не сохраниться в облако.');
+    if(/database error|unexpected_failure/.test(s) || status>=500)
+      return m('Сбой на стороне сервера. Попробуйте позже — подробности записаны в журнал ошибок.');
+    return m(raw?('Не удалось выполнить запрос: '+raw):'Неизвестная ошибка — откройте журнал ошибок.');
+  };
+})();
+</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="manifest" href="manifest.webmanifest">
@@ -1788,6 +1922,19 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
           <button class="btn ghost" id="diagClose" style="flex:1"><svg class="ic"><use href="#ic-x"/></svg>Скрыть</button>
         </div>
       </div>
+      <!-- Журнал ошибок: всё, что приложение записало через appLog (сбои входа,
+           регистрации, синхронизации, ошибки скриптов). Счётчик в названии
+           обновляется сам при каждой новой записи. -->
+      <button class="btn ghost block" id="logBtn"><svg class="ic"><use href="#ic-note"/></svg><span id="logBtnLabel">Журнал ошибок</span></button>
+      <div id="logPanel" class="hide" style="margin-top:10px">
+        <pre id="logText" style="white-space:pre-wrap;word-break:break-word;font:11px/1.45 ui-monospace,Menlo,Consolas,monospace;background:rgba(0,0,0,.05);border:1px solid rgba(0,0,0,.14);border-radius:10px;padding:10px;max-height:360px;overflow:auto;margin:0;color:inherit">—</pre>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+          <button class="btn ghost" id="logCopy" style="flex:1 1 45%"><svg class="ic"><use href="#ic-clipboard"/></svg>Скопировать</button>
+          <button class="btn ghost" id="logRefresh" style="flex:1 1 45%"><svg class="ic"><use href="#ic-reset"/></svg>Обновить</button>
+          <button class="btn ghost" id="logClear" style="flex:1 1 45%"><svg class="ic"><use href="#ic-x"/></svg>Очистить</button>
+          <button class="btn ghost" id="logClose" style="flex:1 1 45%"><svg class="ic"><use href="#ic-chevu"/></svg>Скрыть</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -2510,6 +2657,21 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
 <script src="dictionary/GRAMMAR_TENSES_TEST_VERB_B.js"></script>
 <script src="dictionary/GRAMMAR_TENSES_TEST_VERB_C1.js"></script>
 <script src="dictionary/GRAMMAR_TENSES_TEST_VERB_C2.js"></script>
+
+<!-- Страховка: если журнальный скрипт в <head> почему-то не выполнился,
+     вызовы appLog…/explainAuthError не должны ронять приложение. -->
+<script>
+if(typeof window.appLogErr!=='function'){
+  window.appLog=window.appLogErr=window.appLogWarn=window.appLogInfo=function(){};
+  window.appLogGet=function(){return [];}; window.appLogCount=function(){return 0;};
+  window.appLogClear=function(){}; window.appLogText=function(){return 'Журнал недоступен.';};
+}
+if(typeof window.explainAuthError!=='function'){
+  window.explainAuthError=function(e){
+    return { msg:'Ошибка: '+((e&&(e.message||e.msg))||e||'неизвестно'), tone:'var(--red)', code:'—', raw:'' };
+  };
+}
+</script>
 
 <script>
 // ---------- data ----------
@@ -6035,6 +6197,8 @@ async function buildDiagReport(){
     L.push('user_progress (весов в облаке): '+d.user_progress_count);
   }
   if(d.lastLbError){ L.push(''); L.push('последняя ошибка записи рейтинга: '+d.lastLbError); }
+  // подсказка: если тут не ноль — смотреть кнопку «Журнал ошибок» ниже
+  try{ if(typeof appLogCount==='function'){ L.push(''); L.push('записей в журнале ошибок: '+appLogCount()); } }catch(e){}
   return L.join('\n');
 }
 
@@ -6051,6 +6215,38 @@ if($('#diagRefresh')) $('#diagRefresh').onclick=runDiag;
 if($('#diagClose'))   $('#diagClose').onclick=()=>{ const p=$('#diagPanel'); if(p) p.classList.add('hide'); };
 if($('#diagCopy'))    $('#diagCopy').onclick=async ()=>{
   const txt=$('#diagText'), btn=$('#diagCopy'); if(!txt||!btn) return;
+  const done=()=>{ btn.textContent='Скопировано ✓'; setTimeout(()=>{ btn.textContent='Скопировать'; },1500); };
+  try{ await navigator.clipboard.writeText(txt.textContent); done(); }
+  catch(e){
+    try{ const r=document.createRange(); r.selectNodeContents(txt); const s=getSelection(); s.removeAllRanges(); s.addRange(r); document.execCommand('copy'); s.removeAllRanges(); done(); }
+    catch(_){ btn.textContent='Выдели текст вручную'; setTimeout(()=>{ btn.textContent='Скопировать'; },1800); }
+  }
+};
+
+// ---------- ЖУРНАЛ ОШИБОК ----------
+// Панель рядом с диагностикой. Сам сбор ведёт скрипт в <head> (appLog…),
+// здесь только показ, копирование и очистка.
+function renderLog(){
+  const panel=$('#logPanel'), txt=$('#logText');
+  if(!panel||!txt) return;
+  panel.classList.remove('hide');
+  txt.textContent = (typeof appLogText==='function') ? appLogText() : 'Журнал недоступен.';
+  txt.scrollTop = txt.scrollHeight;   // сразу к самым свежим записям
+}
+if($('#logBtn')) $('#logBtn').onclick = () => {
+  const p=$('#logPanel');
+  if(p && !p.classList.contains('hide')){ p.classList.add('hide'); return; }  // повторный клик — свернуть
+  renderLog();
+};
+if($('#logRefresh')) $('#logRefresh').onclick = renderLog;
+if($('#logClose'))   $('#logClose').onclick   = ()=>{ const p=$('#logPanel'); if(p) p.classList.add('hide'); };
+if($('#logClear'))   $('#logClear').onclick   = ()=>{
+  if(!confirm('Очистить журнал ошибок?\n\nЗаписи удалятся с устройства без восстановления.')) return;
+  if(typeof appLogClear==='function') appLogClear();
+  renderLog();
+};
+if($('#logCopy'))    $('#logCopy').onclick    = async ()=>{
+  const txt=$('#logText'), btn=$('#logCopy'); if(!txt||!btn) return;
   const done=()=>{ btn.textContent='Скопировано ✓'; setTimeout(()=>{ btn.textContent='Скопировать'; },1500); };
   try{ await navigator.clipboard.writeText(txt.textContent); done(); }
   catch(e){
@@ -7680,7 +7876,7 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
                     closeAuthModal();
                     if(typeof renderSyncButtons==='function') renderSyncButtons();
                 }
-            }catch(e){ showMsg($('#modal-auth-msg'), 'Ошибка сети', 'var(--red)'); }
+            }catch(e){ const ex=explainAuthError(e); appLogErr('вход (окно)', e); showMsg($('#modal-auth-msg'), ex.msg, ex.tone); }
             finally{ busy(btn, false); if(btn2) btn2.disabled=false; }
         }
         if($('#modal-login'))    $('#modal-login').onclick    = () => modalAuth(doLogin);
@@ -8375,28 +8571,29 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
         async function doLogin(creds, msgEl) {
             const s = await supabase.auth.signInWithPassword(creds);
             if (s.data && s.data.session) return { user: s.data.user, created: false };
-            const m = (s.error && s.error.message) || '';
-            if (/not confirmed/i.test(m)) {
-                showMsg(msgEl, 'E-mail аккаунта не подтверждён. В Supabase отключите подтверждение e-mail (Authentication → Providers → Email) и войдите снова.', 'var(--gold)');
-                return null;
-            }
-            showMsg(msgEl, 'Неверный логин или пароль', 'var(--red)');
+            // ошибка расшифровывается в explainAuthError (см. скрипт в <head>),
+            // а сырой ответ сервера уходит в журнал — по нему видно настоящую причину
+            const e = explainAuthError(s.error || 'сервер не вернул сессию');
+            appLogErr('вход', s.error || 'нет сессии в ответе', 'логин: ' + creds.username + ' · адрес: ' + creds.email);
+            showMsg(msgEl, e.msg, e.tone);
             return null;
         }
         // Явная РЕГИСТРАЦИЯ: создаёт новый аккаунт, сообщает если логин занят.
         async function doRegister(creds, msgEl) {
+            appLogInfo('регистрация', 'попытка', 'логин: ' + creds.username + ' · адрес: ' + creds.email);
             const reg = await supabase.auth.signUp(creds);
             if (reg.error) {
-                const m = reg.error.message || '';
-                if (/already|registered|exists/i.test(m)) { showMsg(msgEl, 'Такой логин уже занят — нажмите «Войти»', 'var(--red)'); return null; }
-                if (/password/i.test(m)) { showMsg(msgEl, 'Пароль слишком простой — минимум 6 символов', 'var(--red)'); return null; }
-                showMsg(msgEl, m || 'Не удалось зарегистрироваться', 'var(--red)');
+                // единая расшифровка + сырой ответ в журнал (код, статус, текст)
+                const e = explainAuthError(reg.error);
+                appLogErr('регистрация', reg.error, 'логин: ' + creds.username + ' · адрес: ' + creds.email);
+                showMsg(msgEl, e.msg, e.tone);
                 return null;
             }
             if (reg.data.session) return { user: reg.data.user, created: true };
             // сессии нет — если подтверждение e-mail выключено, повторный вход сработает
             const re = await supabase.auth.signInWithPassword(creds);
             if (re.data && re.data.session) return { user: re.data.user, created: true };
+            appLogErr('регистрация', 'аккаунт создан, но сессии нет', re.error || 'вероятно включено Confirm email');
             showMsg(msgEl, 'Аккаунт создан. Если в Supabase включено подтверждение e-mail — отключите его, иначе вход невозможен (адрес технический).', 'var(--gold)');
             return null;
         }
@@ -8425,7 +8622,8 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
                     showMsg(elSyncMsg, res.created ? 'Аккаунт создан, вы вошли ✓' : 'Вы вошли ✓', 'var(--green)');
                 }
             } catch (err) {
-                showMsg(elErrorMsg, 'Ошибка сети', 'var(--red)');
+                const ex = explainAuthError(err); appLogErr('вход (настройки)', err);
+                showMsg(elErrorMsg, ex.msg, ex.tone);
             } finally {
                 busy(btn, false); if(btn2) btn2.disabled = false;
             }
@@ -8657,7 +8855,7 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
             try {
                 const res = await fn(creds, elEntryMsg);
                 if (res) await cloudEnter(creds.username); // заведёт локальный профиль и скачает прогресс
-            } catch (e) { showMsg(elEntryMsg, 'Ошибка сети', 'var(--red)'); }
+            } catch (e) { const ex=explainAuthError(e); appLogErr('вход (стартовый экран)', e); showMsg(elEntryMsg, ex.msg, ex.tone); }
             finally { busy(btn, false); if(btn2) btn2.disabled = false; }
         }
         if($('#entry-login'))    $('#entry-login').onclick    = () => entryAuth(doLogin);
