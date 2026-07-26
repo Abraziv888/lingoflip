@@ -1959,6 +1959,10 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
           <button class="btn ghost" id="logClose" style="flex:1 1 45%"><svg class="ic"><use href="#ic-chevu"/></svg>Скрыть</button>
         </div>
       </div>
+      <!-- Проверка обновлений приложения: тянет свежий index.html с сервера в обход
+           всех кэшей, сравнивает APP_VERSION и при расхождении обновляет кэш и
+           перезапускает страницу. Итог показывается тостом внизу экрана. -->
+      <button class="btn ghost block" id="updBtn"><svg class="ic"><use href="#ic-reset"/></svg><span id="updBtnLabel">Проверить обновления</span></button>
     </div>
   </div>
 
@@ -9396,6 +9400,140 @@ $('#wTabs').querySelectorAll('button').forEach(b=>b.onclick=()=>setTab(b.dataset
 if ('serviceWorker' in navigator) {
   /* SW отключён в тестовой сборке */
 }
+</script>
+<script>
+/* ══════════ Версия приложения и механизм обновления ══════════
+   Проблема: установленный PWA при открытии часто НЕ перезагружается —
+   Chrome возвращает страницу из памяти, а «сначала сеть» в SW всё равно
+   проходит через HTTP-кэш браузера (GitHub Pages: max-age=600). Итог —
+   пользователь смотрит на старый интерфейс и не знает об этом.
+   Решение (не зависит от service worker — работает и в тестовой сборке):
+   1) APP_VERSION — единственное место, где меняется номер версии
+      (надпись в шапке подставляется отсюда же).
+   2) При старте: если в localStorage лежит меньший номер — значит, только
+      что обновились → тост «Обновлено до версии N» на несколько секунд.
+   3) Фоновая проверка: качаем ./index.html?updchk=<ts> с cache:'no-store'
+      (метка времени пробивает и HTTP-кэш, и кэш SW), парсим из него
+      APP_VERSION. Если на сервере новее — кладём свежий HTML во все кэши,
+      просим SW обновиться и перезапускаем страницу; после перезапуска
+      сработает п.2 и покажет «Обновлено до версии N».
+      Запускается: при старте, при возврате в приложение (visibilitychange,
+      не чаще раза в 10 минут) и вручную кнопкой в настройках.
+   4) Кнопка «Проверить обновления» (Профиль и данные, под диагностикой):
+      тот же путь, но с явными ответами-тостами «Обновлений нет — у вас
+      последняя версия (N)» / «Найдена версия M — обновляю…» / ошибка сети.
+   ВАЖНО при выпуске новой версии: поднять APP_VERSION здесь (91 → 92…). */
+const APP_VERSION = 92;
+
+(function(){
+  // Надпись «версия N» в шапке — из константы, чтобы номер жил в одном месте.
+  try{
+    var by=document.querySelector('.topbar .logo .by');
+    if(by) by.innerHTML='<b>by Abraziv</b> · версия '+APP_VERSION;
+  }catch(e){}
+
+  // Тост «Обновлено до версии N» при первом запуске новой версии.
+  try{
+    var prev=parseInt(localStorage.getItem('wm2_appver')||'0',10);
+    localStorage.setItem('wm2_appver', String(APP_VERSION));
+    if(prev && prev<APP_VERSION){
+      var say=function(){ if(window.flashToast) flashToast('Обновлено до версии '+APP_VERSION); else setTimeout(say,300); };
+      setTimeout(say, 700);
+    }
+  }catch(e){}
+})();
+
+var _updLastCheck=0, _updBusy=false, _updWaitT=null;
+
+// Идёт ли сейчас партия: открыт экран игры, грамматического теста,
+// прослушивания или ещё висит окно итогов. Перезагрузка в этот момент
+// убила бы текущий раунд / не дала посмотреть результат.
+function updGameBusy(){
+  try{
+    return ['game','gtest','listen','results'].some(function(id){
+      var el=document.getElementById(id);
+      return el && !el.classList.contains('hide');
+    });
+  }catch(e){ return false; }
+}
+
+// Перезапуск на новую версию — только когда игрок НЕ в игре. Если партия
+// идёт, тихо ждём её завершения (опрос раз в 5 секунд) и только потом
+// показываем тост и перезагружаемся. Кэш к этому моменту уже освежён,
+// так что после перезапуска поднимется новая версия.
+function applyUpdateReload(remote){
+  if(!updGameBusy()){
+    if(_updWaitT){ clearInterval(_updWaitT); _updWaitT=null; }
+    if(window.flashToast) flashToast('Найдена версия '+remote+' — обновляю…');
+    setTimeout(function(){ location.reload(); }, 1500);
+    return;
+  }
+  if(_updWaitT) return;                       // уже ждём окончания игры
+  _updWaitT=setInterval(function(){
+    if(updGameBusy()) return;
+    clearInterval(_updWaitT); _updWaitT=null;
+    if(window.flashToast) flashToast('Найдена версия '+remote+' — обновляю…');
+    setTimeout(function(){ location.reload(); }, 1500);
+  }, 5000);
+}
+
+async function checkForUpdate(manual){
+  if(_updBusy) return; _updBusy=true; _updLastCheck=Date.now();
+  try{
+    // Метка времени в query: (а) HTTP-кэш браузера считает URL новым;
+    // (б) в кэше SW такого ключа нет — запрос гарантированно уходит в сеть.
+    var res=await fetch('./index.html?updchk='+Date.now(), {cache:'no-store'});
+    if(!res || !res.ok) throw new Error('HTTP '+(res&&res.status));
+    var resForCache=res.clone();                 // клонировать ДО чтения тела
+    var txt=await res.text();
+    var m=txt.match(/APP_VERSION\s*=\s*(\d+)/) || txt.match(/версия\s+(\d+)/);
+    var remote=m?parseInt(m[1],10):0;
+    if(!remote){
+      if(manual && window.flashToast) flashToast('Не удалось определить версию на сервере','warn');
+      return;
+    }
+    if(remote<=APP_VERSION){
+      if(manual && window.flashToast) flashToast('Обновлений нет — у вас последняя версия ('+APP_VERSION+')');
+      return;
+    }
+    // Свежий HTML — во все кэши под ключом './index.html', чтобы SW после
+    // перезапуска (и офлайн) отдавал уже новую страницу, а не старую.
+    // Обновление кэша безопасно и во время игры — перезапуск отложен ниже.
+    try{
+      if(window.caches && caches.keys){
+        var ks=await caches.keys();
+        for(var i=0;i<ks.length;i++){
+          try{ var c=await caches.open(ks[i]); await c.put('./index.html', resForCache.clone()); }catch(e){}
+        }
+      }
+    }catch(e){}
+    // Попросить браузер скачать свежий sw.js (если SW зарегистрирован).
+    try{
+      if('serviceWorker' in navigator){
+        var regs=await navigator.serviceWorker.getRegistrations();
+        regs.forEach(function(r){ try{ r.update(); }catch(e){} });
+      }
+    }catch(e){}
+    // Перезапуск — с учётом идущей игры (см. applyUpdateReload выше).
+    applyUpdateReload(remote);
+  }catch(e){
+    if(manual && window.flashToast) flashToast('Не удалось проверить обновления — проверьте сеть','warn');
+  }finally{ _updBusy=false; }
+}
+
+// Кнопка в настройках («Профиль и данные», под диагностикой и журналом).
+(function(){
+  var b=document.getElementById('updBtn');
+  if(b) b.onclick=function(){ if(window.flashToast) flashToast('Проверяю обновления…'); checkForUpdate(true); };
+})();
+
+// Автопроверка: вскоре после запуска…
+setTimeout(function(){ checkForUpdate(false); }, 2500);
+// …и при возврате в свёрнутое приложение (главный сценарий «старого экрана»:
+// Chrome поднял страницу из памяти без перезагрузки). Не чаще раза в 10 минут.
+document.addEventListener('visibilitychange', function(){
+  if(document.visibilityState==='visible' && Date.now()-_updLastCheck>10*60*1000) checkForUpdate(false);
+});
 </script>
 
 <!-- ===================== SCROLL TEST 5: контент скроллится внутри контейнера ===================== -->
