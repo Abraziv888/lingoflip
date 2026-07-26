@@ -1676,7 +1676,7 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
 <div class="wrap">
 
   <div class="topbar">
-    <div class="logo"><span class="dot"><svg class="logoic" viewBox="0 0 32 32"><use href="#ic-logo"/></svg></span><span class="txt"><span class="ttl-row"><span class="appname">LingoFlip</span><span class="tagcol"><span class="t1"><span class="ru">RU</span> <span class="dash">-</span> <span class="en">EN</span></span><span class="t2">Cards</span></span></span><span class="by"><b>by Abraziv</b> · версия 91</span></span></div>
+    <div class="logo"><span class="dot"><svg class="logoic" viewBox="0 0 32 32"><use href="#ic-logo"/></svg></span><span class="txt"><span class="ttl-row"><span class="appname">LingoFlip</span><span class="tagcol"><span class="t1"><span class="ru">RU</span> <span class="dash">-</span> <span class="en">EN</span></span><span class="t2">Cards</span></span></span><span class="by"><b>by Abraziv</b> · версия 92.1</span></span></div>
     <button class="profile" id="userPill"><span class="av"><svg class="ic"><use href="#ic-profile"/></svg><span class="medal" id="pillCup" style="display:none"><span class="mn"></span></span><span class="av-warn" id="pillWarn" style="display:none" title="Сессия истекла — войдите снова">!</span></span><span class="nm" id="userName">—</span></button>
   </div>
 
@@ -9425,12 +9425,12 @@ if ('serviceWorker' in navigator) {
       тот же путь, но с явными ответами-тостами «Обновлений нет — у вас
       последняя версия (N)» / «Найдена версия M — обновляю…» / ошибка сети.
    ВАЖНО при выпуске новой версии: поднять номер здесь. Мелкие правки —
-   только APP_SUBVERSION (01 → 02…), крупные — APP_VERSION (92 → 93, а
+   только APP_SUBVERSION (1 → 2…), крупные — APP_VERSION (92 → 93, а
    подверсию сбросить в 0 или 1). Сравнение идёт по APP_BUILD. */
 const APP_VERSION    = 92;   // основная версия
-const APP_SUBVERSION = 1;    // подверсия (01, 02, …)
+const APP_SUBVERSION = 1;    // подверсия (1, 2, …)
 const APP_BUILD = APP_VERSION*100 + APP_SUBVERSION;               // 9201
-const APP_VERSION_LABEL = APP_VERSION + '.' + String(APP_SUBVERSION).padStart(2,'0'); // «92.01»
+const APP_VERSION_LABEL = APP_VERSION + '.' + APP_SUBVERSION;     // «92.1» — подверсия всегда в шапке
 
 (function(){
   // Надпись «версия N.NN» в шапке — из константы, чтобы номер жил в одном месте.
@@ -9567,7 +9567,7 @@ async function checkForUpdate(manual){
     var ms=txt.match(/APP_SUBVERSION\s*=\s*(\d+)/);
     var rv=mv?parseInt(mv[1],10):0, rs=ms?parseInt(ms[1],10):0;
     var remoteBuild=rv*100+rs;
-    var remoteLabel=rv+(ms?('.'+String(rs).padStart(2,'0')):'');
+    var remoteLabel=rv+(ms?('.'+rs):'');
     if(!rv){
       if(manual && window.flashToast) flashToast('Не удалось определить версию на сервере','warn');
       return;
