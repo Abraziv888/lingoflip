@@ -9487,7 +9487,7 @@ if ('serviceWorker' in navigator) {
    только APP_SUBVERSION (1 → 2…), крупные — APP_VERSION (92 → 93, а
    подверсию сбросить в 0 или 1). Сравнение идёт по APP_BUILD. */
 const APP_VERSION    = 93;   // основная версия (93 — разовый подъём: клиенты сборки «92» без подверсий видят только основную)
-const APP_SUBVERSION = 1;    // подверсия (1, 2, …)
+const APP_SUBVERSION = 3;    // подверсия (1, 2, …)
 const APP_BUILD = APP_VERSION*100 + APP_SUBVERSION;               // 9201
 const APP_VERSION_LABEL = APP_VERSION + '.' + APP_SUBVERSION;     // «92.1» — подверсия всегда в шапке
 
@@ -9516,7 +9516,7 @@ const APP_VERSION_LABEL = APP_VERSION + '.' + APP_SUBVERSION;     // «92.1» �
   }catch(e){}
 })();
 
-var _updLastCheck=0, _updBusy=false, _updWaitT=null;
+var _updLastCheck=0, _updBusy=false, _updWaitT=null, _updRetries=0;
 
 // Идёт ли сейчас партия: открыт экран игры, грамматического теста,
 // прослушивания или ещё висит окно итогов. Перезагрузка в этот момент
@@ -9622,6 +9622,7 @@ async function checkForUpdate(manual){
     // (б) в кэше SW такого ключа нет — запрос гарантированно уходит в сеть.
     var res=await fetch('./index.html?updchk='+Date.now(), {cache:'no-store'});
     if(!res || !res.ok) throw new Error('HTTP '+(res&&res.status));
+    _updRetries=0;                               // сеть есть — счётчик повторов на ноль
     var resForCache=res.clone();                 // клонировать ДО чтения тела
     var txt=await res.text();
     // Версия и подверсия сервера → номер сборки. Понимаем и старый формат
@@ -9648,6 +9649,11 @@ async function checkForUpdate(manual){
           }
         }
       }catch(e){}
+      // Обновление «установлено» даже если перезапуск не случится (приложение
+      // убьют из памяти во время игры): cache:'reload' скачивает index.html
+      // заново и ПЕРЕЗАПИСЫВАЕТ им запись в HTTP-кэше браузера — следующий
+      // холодный старт поднимет новую версию безо всяких проверок.
+      try{ await fetch('./index.html', {cache:'reload'}); }catch(e){}
       // Заодно освежить словари, чтобы перезапуск был один, а не два.
       try{ await refreshDictionaries(); }catch(e){}
       // Попросить браузер скачать свежий sw.js (если SW зарегистрирован).
@@ -9671,6 +9677,9 @@ async function checkForUpdate(manual){
     if(manual && window.flashToast) flashToast('Обновлений нет — у вас последняя версия ('+APP_VERSION_LABEL+')');
   }catch(e){
     if(manual && window.flashToast) flashToast('Не удалось проверить обновления — проверьте сеть','warn');
+    // Тихая проверка сорвалась (сбой сети и т.п.) — не бросаем: до 3 повторов
+    // с шагом 90 секунд. Плюс отдельный триггер на событие возврата сети ниже.
+    if(!manual && _updRetries<3){ _updRetries++; setTimeout(function(){ checkForUpdate(false); }, 90*1000); }
   }finally{ _updBusy=false; }
 }
 
@@ -9687,11 +9696,44 @@ setTimeout(function(){ checkForUpdate(false); }, 2500);
 function checkForUpdateOnSettings(){
   if(Date.now()-_updLastCheck>60*1000) checkForUpdate(false);
 }
-// …и при возврате в свёрнутое приложение (главный сценарий «старого экрана»:
+// Общий помощник триггеров: проверить, если с прошлой проверки прошло
+// больше minMin минут, есть сеть и страница видима.
+function updTick(minMin){
+  try{
+    if(navigator.onLine===false) return;
+    if(document.visibilityState!=='visible') return;
+    if(Date.now()-_updLastCheck>minMin*60*1000) checkForUpdate(false);
+  }catch(e){}
+}
+// …при возврате в свёрнутое приложение (главный сценарий «старого экрана»:
 // Chrome поднял страницу из памяти без перезагрузки). Не чаще раза в 10 минут.
 document.addEventListener('visibilitychange', function(){
-  if(document.visibilityState==='visible' && Date.now()-_updLastCheck>10*60*1000) checkForUpdate(false);
+  if(document.visibilityState==='visible') updTick(10);
 });
+// …при возврате фокуса окну (десктоп: переключение окон не всегда даёт
+// visibilitychange). Тот же лимит 10 минут.
+window.addEventListener('focus', function(){ updTick(10); });
+// …при восстановлении страницы из back/forward-кэша браузера (кнопка
+// «назад»): load и visibilitychange при этом могут не сработать вовсе.
+window.addEventListener('pageshow', function(e){ if(e && e.persisted) updTick(1); });
+// …при возвращении сети: проверка, сорвавшаяся в офлайне, повторится сразу,
+// как только интернет появился (полторы секунды — дать сети устаканиться).
+window.addEventListener('online', function(){ setTimeout(function(){ updTick(0.5); }, 1500); });
+// …и просто по времени: приложение может жить открытым часами без единого
+// сворачивания — раз в 5 минут смотрим, не пора ли (интервал: 30 минут).
+setInterval(function(){ updTick(30); }, 5*60*1000);
+// …при выходе на главный экран (конец игры, возврат из настроек): дешёвая
+// точка «между делами», лимит 10 минут. Обёртка не ломает навигацию:
+// сам вызов show выполняется как раньше, проверка — отдельно и в try.
+try{
+  var _updOrigShow=window.show;
+  if(typeof _updOrigShow==='function'){
+    window.show=function(id){
+      _updOrigShow.apply(this, arguments);
+      try{ if(id==='home') updTick(10); }catch(e){}
+    };
+  }
+}catch(e){}
 </script>
 
 <!-- ===================== SCROLL TEST 5: контент скроллится внутри контейнера ===================== -->
