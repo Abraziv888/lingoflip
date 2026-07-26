@@ -8399,6 +8399,7 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
             const raw = localStorage.getItem('wm2_user_'+name); if(!raw){ syncTrace('выгрузка','отменена: нет локального профиля '+name); return false; }
             let u; try{ u=JSON.parse(raw); }catch(e){ syncTrace('выгрузка','отменена: профиль не читается'); return false; }
             const __t0=Date.now();
+            window.__pushBusyAt=Date.now();   // идёт выгрузка — перезапуск на новую версию подождёт (см. updGameBusy)
             syncTrace('выгрузка','старт: '+name);
             let wOk = true, sOk = true;
             const wRows = buildWeightRows(uid, u);
@@ -8422,6 +8423,7 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
             try{ await window.cloudPushLeaderboard(name); }catch(e){}
             if(wOk && sOk){ try{ setSyncBase(name); }catch(e){} } // дельта-база = текущее состояние (теперь оно ДЕЙСТВИТЕЛЬНО в облаке)
             syncTrace('выгрузка','итог: '+(wOk&&sOk?'успех':'С ОШИБКАМИ')+' за '+(Date.now()-__t0)+'мс');
+            window.__pushBusyAt=0;            // выгрузка завершена — перезапуск разрешён
             return wOk && sOk;
         }
         // ===== ДВУСТОРОННЯЯ СИНХРОНИЗАЦИЯ (pull → merge → push) =====
@@ -9422,23 +9424,35 @@ if ('serviceWorker' in navigator) {
    4) Кнопка «Проверить обновления» (Профиль и данные, под диагностикой):
       тот же путь, но с явными ответами-тостами «Обновлений нет — у вас
       последняя версия (N)» / «Найдена версия M — обновляю…» / ошибка сети.
-   ВАЖНО при выпуске новой версии: поднять APP_VERSION здесь (91 → 92…). */
-const APP_VERSION = 92;
+   ВАЖНО при выпуске новой версии: поднять номер здесь. Мелкие правки —
+   только APP_SUBVERSION (01 → 02…), крупные — APP_VERSION (92 → 93, а
+   подверсию сбросить в 0 или 1). Сравнение идёт по APP_BUILD. */
+const APP_VERSION    = 92;   // основная версия
+const APP_SUBVERSION = 1;    // подверсия (01, 02, …)
+const APP_BUILD = APP_VERSION*100 + APP_SUBVERSION;               // 9201
+const APP_VERSION_LABEL = APP_VERSION + '.' + String(APP_SUBVERSION).padStart(2,'0'); // «92.01»
 
 (function(){
-  // Надпись «версия N» в шапке — из константы, чтобы номер жил в одном месте.
+  // Надпись «версия N.NN» в шапке — из константы, чтобы номер жил в одном месте.
   try{
     var by=document.querySelector('.topbar .logo .by');
-    if(by) by.innerHTML='<b>by Abraziv</b> · версия '+APP_VERSION;
+    if(by) by.innerHTML='<b>by Abraziv</b> · версия '+APP_VERSION_LABEL;
   }catch(e){}
 
-  // Тост «Обновлено до версии N» при первом запуске новой версии.
+  // Тост «Обновлено до версии N.NN» при первом запуске новой сборки.
   try{
     var prev=parseInt(localStorage.getItem('wm2_appver')||'0',10);
-    localStorage.setItem('wm2_appver', String(APP_VERSION));
-    if(prev && prev<APP_VERSION){
-      var say=function(){ if(window.flashToast) flashToast('Обновлено до версии '+APP_VERSION); else setTimeout(say,300); };
+    if(prev && prev<100) prev=prev*100;        // старый формат хранил только версию (92 → 9200)
+    localStorage.setItem('wm2_appver', String(APP_BUILD));
+    var justDicts=false;
+    try{ justDicts=sessionStorage.getItem('wm2_dictupd')==='1'; sessionStorage.removeItem('wm2_dictupd'); }catch(e){}
+    if(prev && prev<APP_BUILD){
+      var say=function(){ if(window.flashToast) flashToast('Обновлено до версии '+APP_VERSION_LABEL); else setTimeout(say,300); };
       setTimeout(say, 700);
+    }else if(justDicts){
+      // Версия не менялась, но словари были перезагружены (см. refreshDictionaries).
+      var say2=function(){ if(window.flashToast) flashToast('Словари обновлены'); else setTimeout(say2,300); };
+      setTimeout(say2, 700);
     }
   }catch(e){}
 })();
@@ -9450,6 +9464,11 @@ var _updLastCheck=0, _updBusy=false, _updWaitT=null;
 // убила бы текущий раунд / не дала посмотреть результат.
 function updGameBusy(){
   try{
+    // Идёт двусторонняя синхронизация или выгрузка в облако — не перезапускаться,
+    // иначе браузер оборвёт запросы («Failed to fetch» в журнале). Метка времени
+    // самоочищается: старше 30 секунд — считаем зависшей и не блокируем.
+    if(window.__syncInFlight) return true;
+    if(window.__pushBusyAt && Date.now()-window.__pushBusyAt<30000) return true;
     return ['game','gtest','listen','results'].some(function(id){
       var el=document.getElementById(id);
       return el && !el.classList.contains('hide');
@@ -9461,10 +9480,10 @@ function updGameBusy(){
 // идёт, тихо ждём её завершения (опрос раз в 5 секунд) и только потом
 // показываем тост и перезагружаемся. Кэш к этому моменту уже освежён,
 // так что после перезапуска поднимется новая версия.
-function applyUpdateReload(remote){
+function applyUpdateReload(msg){
   if(!updGameBusy()){
     if(_updWaitT){ clearInterval(_updWaitT); _updWaitT=null; }
-    if(window.flashToast) flashToast('Найдена версия '+remote+' — обновляю…');
+    if(window.flashToast) flashToast(msg);
     setTimeout(function(){ location.reload(); }, 1500);
     return;
   }
@@ -9472,9 +9491,65 @@ function applyUpdateReload(remote){
   _updWaitT=setInterval(function(){
     if(updGameBusy()) return;
     clearInterval(_updWaitT); _updWaitT=null;
-    if(window.flashToast) flashToast('Найдена версия '+remote+' — обновляю…');
+    if(window.flashToast) flashToast(msg);
     setTimeout(function(){ location.reload(); }, 1500);
   }, 5000);
+}
+
+/* ── Проверка словарей ──────────────────────────────────────────────────
+   Проблема: файл в dictionary/ обновили, а версию поднять забыли — и
+   старый словарь живёт в HTTP-кэше браузера (GitHub Pages: max-age=600)
+   и в кэше SW сколько угодно.
+   Решение: при каждой проверке обновлений опрашиваем ВСЕ файлы словарей
+   условными запросами (cache:'no-cache' → браузер шлёт If-None-Match и
+   получает дешёвый 304, если файл не менялся; полное скачивание — только
+   для реально изменившихся). ETag каждого файла запоминаем в localStorage;
+   расхождение = файл на сервере другой. Такой запрос заодно освежает
+   HTTP-кэш, а свежий ответ мы сами кладём в кэши SW — после перезагрузки
+   <script src> подхватят уже новые файлы.
+   Список файлов собирается из реальных тегов <script src="dictionary/…">
+   плюс два HTML грамматики, которые грузятся в iframe. */
+function updDictFiles(){
+  var list=[];
+  try{
+    document.querySelectorAll('script[src^="dictionary/"]').forEach(function(s){
+      list.push(s.getAttribute('src'));
+    });
+  }catch(e){}
+  list.push('dictionary/GRAMMAR_TENSES_CHART.html','dictionary/GRAMMAR_CONSTRUCTION.html');
+  return list;
+}
+async function refreshDictionaries(){
+  var changed=[];
+  var tags={};
+  try{ tags=JSON.parse(localStorage.getItem('wm2_dicttags')||'{}')||{}; }catch(e){}
+  var files=updDictFiles();
+  for(var i=0;i<files.length;i++){
+    var f=files[i];
+    try{
+      var res=await fetch(f, {cache:'no-cache'});          // условный запрос: 304, если не менялся
+      if(!res || !res.ok) continue;
+      var tag=res.headers.get('etag')
+           || ((res.headers.get('last-modified')||'')+'/'+(res.headers.get('content-length')||''));
+      if(!tag || tag==='/'){ continue; }                   // сервер не даёт меток — пропускаем
+      if(tags[f] && tags[f]!==tag){
+        changed.push(f);
+        // Свежий файл — во все кэши SW, чтобы после перезагрузки
+        // stale-while-revalidate отдал уже новую версию, а не старую.
+        try{
+          if(window.caches && caches.keys){
+            var ks=await caches.keys();
+            for(var k=0;k<ks.length;k++){
+              try{ var c=await caches.open(ks[k]); await c.put('./'+f, res.clone()); }catch(e){}
+            }
+          }
+        }catch(e){}
+      }
+      tags[f]=tag;
+    }catch(e){ /* офлайн/сбой по одному файлу — не мешаем остальным */ }
+  }
+  try{ localStorage.setItem('wm2_dicttags', JSON.stringify(tags)); }catch(e){}
+  return changed;
 }
 
 async function checkForUpdate(manual){
@@ -9486,36 +9561,51 @@ async function checkForUpdate(manual){
     if(!res || !res.ok) throw new Error('HTTP '+(res&&res.status));
     var resForCache=res.clone();                 // клонировать ДО чтения тела
     var txt=await res.text();
-    var m=txt.match(/APP_VERSION\s*=\s*(\d+)/) || txt.match(/версия\s+(\d+)/);
-    var remote=m?parseInt(m[1],10):0;
-    if(!remote){
+    // Версия и подверсия сервера → номер сборки. Понимаем и старый формат
+    // (только «версия N» в шапке) — тогда подверсия считается нулевой.
+    var mv=txt.match(/APP_VERSION\s*=\s*(\d+)/) || txt.match(/версия\s+(\d+)/);
+    var ms=txt.match(/APP_SUBVERSION\s*=\s*(\d+)/);
+    var rv=mv?parseInt(mv[1],10):0, rs=ms?parseInt(ms[1],10):0;
+    var remoteBuild=rv*100+rs;
+    var remoteLabel=rv+(ms?('.'+String(rs).padStart(2,'0')):'');
+    if(!rv){
       if(manual && window.flashToast) flashToast('Не удалось определить версию на сервере','warn');
       return;
     }
-    if(remote<=APP_VERSION){
-      if(manual && window.flashToast) flashToast('Обновлений нет — у вас последняя версия ('+APP_VERSION+')');
+    if(remoteBuild>APP_BUILD){
+      // ── Новая сборка ──
+      // Свежий HTML — во все кэши под ключом './index.html', чтобы SW после
+      // перезапуска (и офлайн) отдавал уже новую страницу, а не старую.
+      // Обновление кэша безопасно и во время игры — перезапуск отложен ниже.
+      try{
+        if(window.caches && caches.keys){
+          var ks=await caches.keys();
+          for(var i=0;i<ks.length;i++){
+            try{ var c=await caches.open(ks[i]); await c.put('./index.html', resForCache.clone()); }catch(e){}
+          }
+        }
+      }catch(e){}
+      // Заодно освежить словари, чтобы перезапуск был один, а не два.
+      try{ await refreshDictionaries(); }catch(e){}
+      // Попросить браузер скачать свежий sw.js (если SW зарегистрирован).
+      try{
+        if('serviceWorker' in navigator){
+          var regs=await navigator.serviceWorker.getRegistrations();
+          regs.forEach(function(r){ try{ r.update(); }catch(e){} });
+        }
+      }catch(e){}
+      // Перезапуск — с учётом идущей игры (см. applyUpdateReload выше).
+      applyUpdateReload('Найдена версия '+remoteLabel+' — обновляю…');
       return;
     }
-    // Свежий HTML — во все кэши под ключом './index.html', чтобы SW после
-    // перезапуска (и офлайн) отдавал уже новую страницу, а не старую.
-    // Обновление кэша безопасно и во время игры — перезапуск отложен ниже.
-    try{
-      if(window.caches && caches.keys){
-        var ks=await caches.keys();
-        for(var i=0;i<ks.length;i++){
-          try{ var c=await caches.open(ks[i]); await c.put('./index.html', resForCache.clone()); }catch(e){}
-        }
-      }
-    }catch(e){}
-    // Попросить браузер скачать свежий sw.js (если SW зарегистрирован).
-    try{
-      if('serviceWorker' in navigator){
-        var regs=await navigator.serviceWorker.getRegistrations();
-        regs.forEach(function(r){ try{ r.update(); }catch(e){} });
-      }
-    }catch(e){}
-    // Перезапуск — с учётом идущей игры (см. applyUpdateReload выше).
-    applyUpdateReload(remote);
+    // ── Версия та же: проверяем словари (файл могли обновить без версии) ──
+    var dicts=await refreshDictionaries();
+    if(dicts.length){
+      try{ sessionStorage.setItem('wm2_dictupd','1'); }catch(e){}   // тост после перезапуска
+      applyUpdateReload('Обновлены словари ('+dicts.length+') — перезагружаю…');
+      return;
+    }
+    if(manual && window.flashToast) flashToast('Обновлений нет — у вас последняя версия ('+APP_VERSION_LABEL+')');
   }catch(e){
     if(manual && window.flashToast) flashToast('Не удалось проверить обновления — проверьте сеть','warn');
   }finally{ _updBusy=false; }
