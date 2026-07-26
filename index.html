@@ -977,6 +977,13 @@ body{font-family:'Nunito',sans-serif;background:var(--bg)}
 .gt-final .gt-big{font-family:'Nunito';font-weight:900;font-size:calc(40px * var(--fs,1));color:var(--blue)}
 .gt-final .gt-sub{color:var(--muted);font-weight:800;margin:6px 0 22px;font-size:calc(15px * var(--fs,1))}
 
+/* Кнопка «выбрать набор» у строки «Активный набор» + модалка быстрого выбора */
+.cov-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.covset{width:38px;height:32px;display:flex;align-items:center;justify-content:center;background:var(--card2);border:2px solid var(--line);border-radius:10px;color:var(--muted);cursor:pointer;padding:0;flex:none}
+.covset .ic{width:17px;height:17px}
+.covset:active{transform:translateY(1px)}
+#setPickBody .lvl-cap{margin-top:12px}
+
 /* ===================== ГРАММАТИКА · ОТЧЁТ (#gtReport) ===================== */
 .gtr-overlay{position:fixed;inset:0;z-index:9998;display:flex;
   background:rgba(8,10,14,.72);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
@@ -1880,39 +1887,47 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
     <div class="card">
       <div class="section-title" style="margin-top:0">Levels (наборы и уровни слов)</div>
       <p class="bk-text"><b>General</b> включён — выбираешь наборы по тысячам. Выключи General — выбираешь по уровням сложности. Проценты и количество слов показаны на уровнях; золотой = уровень пройден (вес ≥ порога).</p>
+      <div id="setSelWords"><!-- переносится в модалку выбора набора (#setPick) -->
       <button class="btn block" id="genBtn"><svg class="ic"><use href="#ic-list"/></svg>General</button>
       <div class="lvl-cap">По тысячам (при General)</div>
       <div class="level-grid g5" id="thousandGrid"></div>
       <div class="lvl-cap">По уровням (без General)</div>
       <div class="level-grid" id="levelGrid"></div>
+      </div>
       <button class="btn block danger" id="resetWordsBtn" style="margin-top:14px"><svg class="ic"><use href="#ic-reset"/></svg><span>Сбросить прогресс СЛОВА</span></button>
     </div>
 
     <div class="area phr"><div class="t"><svg class="ic"><use href="#ic-scroll"/></svg>Фразы</div><div class="s">Наборы для режима «Фразы»</div></div>
     <div class="card">
       <p class="bk-text"><b>Фразы + контекст</b> — сначала тренируем фразовый глагол (перевод слева, английский справа), затем в раунде «Закрепление» — пример с этим глаголом в предложении. Уровни: A / B / C. Когда «Фразы + контекст» <b>включено</b>, уровни глаголов и примеров выбираются вместе. Выключи — чтобы выбирать по отдельности.</p>
+      <div id="setSelPhrases"><!-- переносится в модалку выбора набора (#setPick) -->
       <button class="btn block" id="phrCtxBtn"><svg class="ic"><use href="#ic-note"/></svg>ФРАЗЫ + КОНТЕКСТ</button>
       <div class="lvl-cap">Фразовые глаголы</div>
       <div class="level-grid g3" id="phrVerbGrid"></div>
       <div class="lvl-cap">Примеры с контекстом</div>
       <div class="level-grid g3" id="phrExGrid"></div>
+      </div>
       <button class="btn block danger" id="resetPhrBtn" style="margin-top:14px"><svg class="ic"><use href="#ic-reset"/></svg><span>Сбросить прогресс ФРАЗЫ</span></button>
     </div>
     <div class="area phr"><div class="t"><svg class="ic"><use href="#ic-chain"/></svg>Пары</div><div class="s">Наборы для режима «Пары»</div></div>
     <div class="card">
       <div class="section-title" style="margin-top:0">Разделы пар (A / A+ / B / B+ / C / C+)</div>
       <p class="bk-text"><b>General</b> включён — тренируются все пары. Выключи General — выбирай конкретные разделы. Процент — сколько пар раздела уже выучено (вес ≥ порога); золотой = раздел пройден.</p>
+      <div id="setSelPairs"><!-- переносится в модалку выбора набора (#setPick) -->
       <button class="btn block" id="pairGenBtn"><svg class="ic"><use href="#ic-list"/></svg>General</button>
       <div class="lvl-cap">Разделы пар (без General)</div>
       <div class="level-grid g3" id="pairLevelGrid"></div>
+      </div>
       <button class="btn block danger" id="resetPairsBtn" style="margin-top:14px"><svg class="ic"><use href="#ic-reset"/></svg><span>Сбросить прогресс ПАРЫ</span></button>
     </div>
 
     <div class="area verb"><div class="t"><svg class="ic"><use href="#ic-m-verb"/></svg>Глаголы</div><div class="s">Уровни A / B / C — для всех подрежимов глаголов</div></div>
     <div class="card">
       <p class="bk-text">Выбери уровни <b>A / B / C</b> для тренировки глаголов. Если <b>ничего не выбрано</b> — тренируются все уровни. Процент — сколько глаголов уровня уже выучено (вес ≥ порога); золотой = уровень пройден.</p>
+      <div id="setSelVerbs"><!-- переносится в модалку выбора набора (#setPick) -->
       <div class="lvl-cap" id="verbLevelCap">Ничего не выбрано — тренируются все уровни.</div>
       <div class="level-grid g3" id="verbLevelGrid"></div>
+      </div>
       <button class="btn block danger" id="resetVerbsBtn" style="margin-top:14px"><svg class="ic"><use href="#ic-reset"/></svg><span>Сбросить прогресс ГЛАГОЛЫ</span></button>
     </div>
 
@@ -2058,7 +2073,7 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
       <div class="cov-line" data-info="Весь словарь режима: всего карточек, сколько уже видели и сколько изучили (вес ≥ порога).">Всего <b id="covTotal">5000</b> · пройдено <b id="covNon">0</b> · изучено <b id="covLearn">0</b> <span class="cov-note">(вес ≥ <span id="covRef">10</span>)</span></div>
       <div class="zones"><span class="z green" title="Знаешь хорошо (вес больше 0)"><b id="covGreen">—</b></span><span class="z red" title="Даётся сложно (вес меньше 0)"><b id="covRed">—</b></span><span class="z zero" title="Ещё не начато (вес 0)"><b id="covZero">—</b></span></div>
       <hr>
-      <div class="cov-title">Активный набор</div>
+      <div class="cov-title cov-row">Активный набор<button class="covset" id="actSetBtn" title="Выбрать набор"><svg class="ic"><use href="#ic-list"/></svg></button></div>
       <div class="cov-line" data-info="Карточки, по которым сейчас идёт обучение — с учётом выбранных уровней и фильтров."><b id="actN">0</b> на обучении · <span id="actScope">все</span></div>
       <div class="zones"><span class="z green" title="Знаешь хорошо"><b id="actGreen">—</b></span><span class="z red" title="Даётся сложно"><b id="actRed">—</b></span><span class="z zero" title="Ещё не начато"><b id="actZero">—</b></span><span class="z gold" title="Завершено (вес ≥ порога)"><svg class="ic"><use href="#ic-trophy"/></svg><b id="actDone">—</b></span></div>
     </div>
@@ -2240,6 +2255,19 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
         <button class="btn ghost" id="gtReportAgain">Ещё раз</button>
         <button class="btn" id="gtReportExit">Выход</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Быстрый выбор набора с главной (кнопка у строки «Активный набор»).
+       Внутрь переносится живой блок выбора текущего режима из настроек —
+       та же разметка и обработчики, но без кнопок сброса прогресса. -->
+  <div id="setPick" class="gtr-overlay hide">
+    <div class="gtr-panel">
+      <div class="gtr-head">
+        <div class="gtr-title" id="setPickTitle">Выбор набора</div>
+        <button class="gtr-x" id="setPickClose" title="Закрыть"><svg class="ic"><use href="#ic-x"/></svg></button>
+      </div>
+      <div class="gtr-body" id="setPickBody"></div>
     </div>
   </div>
 
@@ -6537,7 +6565,38 @@ document.querySelectorAll('#lwGrid .rounds-stepper.lwst').forEach(st=>{
   st.querySelector('.lwUp').onclick=()=>setListWeightManual(kind, band, cur()+1);
   st.querySelector('.lwDown').onclick=()=>setListWeightManual(kind, band, cur()-1);
 });
-$('#settingsBtn').onclick=()=>{ updateResetLabel(); renderLevels(); renderPairLevels(); renderPhraseLevels(); renderVerbLevels(); if(typeof renderVoices==='function'){ try{ renderVoices(); }catch(e){} } if(typeof renderGtLevels==="function"){ try{ renderGtLevels(); }catch(e){} } navPush('settings'); };
+$('#settingsBtn').onclick=()=>{ if(typeof checkForUpdateOnSettings==='function'){ try{ checkForUpdateOnSettings(); }catch(e){} } updateResetLabel(); renderLevels(); renderPairLevels(); renderPhraseLevels(); renderVerbLevels(); if(typeof renderVoices==='function'){ try{ renderVoices(); }catch(e){} } if(typeof renderGtLevels==="function"){ try{ renderGtLevels(); }catch(e){} } navPush('settings'); };
+// ===== Быстрый выбор набора с главной («Активный набор» → кнопка) =====
+// Модалка не дублирует разметку настроек: при открытии блок выбора текущего
+// режима ПЕРЕНОСИТСЯ из настроек внутрь модалки (те же элементы, обработчики
+// и рендеры — рассинхрон невозможен), при закрытии возвращается на место.
+// Кнопки сброса прогресса в обёртки не входят и остаются в настройках.
+(function(){
+  const ov=$('#setPick'), body=$('#setPickBody'), ttl=$('#setPickTitle');
+  if(!ov||!body) return;
+  let back=null;                                   // куда вернуть блок
+  const selFor=()=> mode==='phrases' ? {el:$('#setSelPhrases'), t:'Наборы фраз'}
+                : mode==='pairs'    ? {el:$('#setSelPairs'),   t:'Разделы пар'}
+                : mode==='verbs'    ? {el:$('#setSelVerbs'),   t:'Уровни глаголов'}
+                :                     {el:$('#setSelWords'),   t:'Наборы и уровни слов'};
+  function spOpen(){
+    const sl=selFor(); if(!sl.el) return;
+    try{ renderLevels(); renderPairLevels(); renderPhraseLevels(); renderVerbLevels(); }catch(e){}  // свежие проценты на чипах
+    back={node:sl.el, parent:sl.el.parentElement, next:sl.el.nextSibling};
+    body.appendChild(sl.el); ttl.textContent=sl.t;
+    ov.classList.remove('hide');
+  }
+  function spClose(){
+    if(back){ try{ back.parent.insertBefore(back.node, back.next); }catch(e){} back=null; }
+    ov.classList.add('hide');
+    try{ refreshHome(); }catch(e){}                // счётчики «Активный набор» — по новому выбору
+  }
+  const b=$('#actSetBtn');
+  if(b) b.onclick=e=>{ e.stopPropagation(); spOpen(); };   // stopPropagation: не дёргать подсказку карточки
+  $('#setPickClose').onclick=spClose;
+  ov.addEventListener('click',e=>{ if(e.target===ov) spClose(); });
+  window.addEventListener('popstate',()=>{ if(!ov.classList.contains('hide')) spClose(); });
+})();
 $('#setBack').onclick=goBack;
 $('#nameBack').onclick=goBack;
 
@@ -7397,7 +7456,7 @@ if($('#vbAllR')) $('#vbAllR').onclick=()=>verbSubFromResults('all');
 if($('#vbTopR')) $('#vbTopR').onclick=()=>verbSubFromResults('top');
 if($('#vbIrrR')) $('#vbIrrR').onclick=()=>verbSubFromResults('irr');
 if($('#vbPairR')) $('#vbPairR').onclick=()=>verbSubFromResults('pair');
-if($('#settingsBtnR')) $('#settingsBtnR').onclick=()=>{ updateResetLabel(); renderLevels(); renderPairLevels(); renderPhraseLevels(); renderVerbLevels(); if(typeof renderVoices==='function'){ try{ renderVoices(); }catch(e){} } if(typeof renderGtLevels==="function"){ try{ renderGtLevels(); }catch(e){} } navPush('settings'); };
+if($('#settingsBtnR')) $('#settingsBtnR').onclick=()=>{ if(typeof checkForUpdateOnSettings==='function'){ try{ checkForUpdateOnSettings(); }catch(e){} } updateResetLabel(); renderLevels(); renderPairLevels(); renderPhraseLevels(); renderVerbLevels(); if(typeof renderVoices==='function'){ try{ renderVoices(); }catch(e){} } if(typeof renderGtLevels==="function"){ try{ renderGtLevels(); }catch(e){} } navPush('settings'); };
 $('#dictsBtn').onclick=()=>navPush('dicts');
 $('#dictsBack').onclick=goBack;
 $('#faqBtn').onclick=()=>navPush('faq');
@@ -9428,7 +9487,7 @@ if ('serviceWorker' in navigator) {
    только APP_SUBVERSION (1 → 2…), крупные — APP_VERSION (92 → 93, а
    подверсию сбросить в 0 или 1). Сравнение идёт по APP_BUILD. */
 const APP_VERSION    = 92;   // основная версия
-const APP_SUBVERSION = 1;    // подверсия (1, 2, …)
+const APP_SUBVERSION = 2;    // подверсия (1, 2, …)
 const APP_BUILD = APP_VERSION*100 + APP_SUBVERSION;               // 9201
 const APP_VERSION_LABEL = APP_VERSION + '.' + APP_SUBVERSION;     // «92.1» — подверсия всегда в шапке
 
@@ -9619,6 +9678,11 @@ async function checkForUpdate(manual){
 
 // Автопроверка: вскоре после запуска…
 setTimeout(function(){ checkForUpdate(false); }, 2500);
+// …при входе в настройки (шестерёнка) — но не чаще раза в минуту, чтобы
+// частые заходы туда-обратно не молотили сервер запросами…
+function checkForUpdateOnSettings(){
+  if(Date.now()-_updLastCheck>60*1000) checkForUpdate(false);
+}
 // …и при возврате в свёрнутое приложение (главный сценарий «старого экрана»:
 // Chrome поднял страницу из памяти без перезагрузки). Не чаще раза в 10 минут.
 document.addEventListener('visibilitychange', function(){
