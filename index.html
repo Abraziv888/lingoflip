@@ -982,7 +982,22 @@ body{font-family:'Nunito',sans-serif;background:var(--bg)}
 .covset{width:38px;height:32px;display:flex;align-items:center;justify-content:center;background:var(--card2);border:2px solid var(--line);border-radius:10px;color:var(--muted);cursor:pointer;padding:0;flex:none}
 .covset .ic{width:17px;height:17px}
 .covset:active{transform:translateY(1px)}
+/* Модалка выбора набора — тот же стиль qm (границы, фон, скругление, тень,
+   затемнение), но карточка шире и со скроллом, т.к. внутри сетка чипов. */
+.qm-card.qm-wide{max-width:440px;text-align:left;padding:0;overflow:hidden;
+  display:flex;flex-direction:column;max-height:calc(100vh - 48px)}
+.qm-wide .qm-whead{display:flex;align-items:center;gap:10px;padding:16px 18px;
+  border-bottom:1px solid var(--line)}
+.qm-wide .qm-wtitle{flex:1;font-family:'Nunito';font-weight:800;
+  font-size:calc(19px * var(--fs,1));color:var(--fg)}
+.qm-wide .qm-wx{width:38px;height:38px;flex:0 0 auto;display:flex;align-items:center;
+  justify-content:center;background:var(--card2);border:2px solid var(--line);
+  border-radius:12px;color:var(--muted);cursor:pointer;padding:0}
+.qm-wide .qm-wx:active{transform:translateY(1px)}
+.qm-wide .qm-wx .ic{width:19px;height:19px}
+.qm-wide .qm-wbody{padding:16px 18px;overflow-y:auto;-webkit-overflow-scrolling:touch}
 #setPickBody .lvl-cap{margin-top:12px}
+#setPickBody>*:first-child{margin-top:0}
 
 /* ===================== ГРАММАТИКА · ОТЧЁТ (#gtReport) ===================== */
 .gtr-overlay{position:fixed;inset:0;z-index:9998;display:flex;
@@ -1863,7 +1878,7 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
         <button class="soundtoggle masterytoggle wmode" id="wmProgBtn"><span class="rate-ic"><span class="p">10</span><span class="p">4</span><span class="n">2</span><span class="n">↕</span></span></button>
       </div>
       <div class="setrow">
-        <div class="setlbl"><div class="lbl">Ручная настройка весов</div><div class="desc">свой вес для категорий A / B / C (от 1 до 10), для + и −</div></div>
+        <div class="setlbl"><div class="lbl">Ручная настройка весов</div><div class="desc">свой вес для категорий A / B / C (от 0 до 10), для + и −. Ноль — вес не меняется: постоянная тренировка без выучивания (0 в «+») и/или без штрафов (0 в «−»)</div></div>
         <button class="soundtoggle masterytoggle wmode" id="wmManualBtn"><span class="mastery-ic">✎</span></button>
       </div>
       <div class="gest-grid" id="wmGrid">
@@ -2261,13 +2276,13 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
   <!-- Быстрый выбор набора с главной (кнопка у строки «Активный набор»).
        Внутрь переносится живой блок выбора текущего режима из настроек —
        та же разметка и обработчики, но без кнопок сброса прогресса. -->
-  <div id="setPick" class="gtr-overlay hide">
-    <div class="gtr-panel">
-      <div class="gtr-head">
-        <div class="gtr-title" id="setPickTitle">Выбор набора</div>
-        <button class="gtr-x" id="setPickClose" title="Закрыть"><svg class="ic"><use href="#ic-x"/></svg></button>
+  <div id="setPick" class="qm-overlay hide">
+    <div class="qm-card qm-wide">
+      <div class="qm-whead">
+        <div class="qm-wtitle" id="setPickTitle">Выбор набора</div>
+        <button class="qm-wx" id="setPickClose" title="Закрыть"><svg class="ic"><use href="#ic-x"/></svg></button>
       </div>
-      <div class="gtr-body" id="setPickBody"></div>
+      <div class="qm-wbody" id="setPickBody"></div>
     </div>
   </div>
 
@@ -2918,6 +2933,9 @@ function tierOf(i){ return TIER[Math.min(4,Math.floor(i/1000))]; }
 const GEST_DEFAULT_PLUS=[4,3,2];   // A / B / C — двойной тап (+)
 const GEST_DEFAULT_MINUS=[4,3,2];  // A / B / C — удержание (−, берётся как магнитуда)
 const MIN_GEST=1, MAX_GEST=10;
+const MIN_WM=0; // ручные веса сопоставления могут быть 0: вес не меняется вовсе —
+                // «постоянная тренировка» без выучивания и без штрафов (жесты и
+                // «вес за клик» в списках живут отдельно, их минимум остаётся 1)
 let gestManual = localStorage.getItem('wm2_gest_manual')==='1';
 let gestPlus=GEST_DEFAULT_PLUS.slice(), gestMinus=GEST_DEFAULT_MINUS.slice();
 (function loadGest(){
@@ -2938,7 +2956,7 @@ if(['linear','progressive','manual'].indexOf(weightMode)<0) weightMode='linear';
 let weightManualPlus = WMODE_MANUAL_DEFAULT.slice();
 let weightManualMinus = WMODE_MANUAL_DEFAULT.slice();
 (function loadWeightManual(){
-  const clamp=v=>Math.min(MAX_GEST,Math.max(MIN_GEST,(parseInt(v,10)||0)));
+  const clamp=v=>Math.min(MAX_GEST,Math.max(MIN_WM,(parseInt(v,10)||0)));
   try{ const p=JSON.parse(localStorage.getItem('wm2_weight_manual_plus')); if(Array.isArray(p)&&p.length===3) weightManualPlus=p.map(clamp); }catch(e){}
   try{ const m=JSON.parse(localStorage.getItem('wm2_weight_manual_minus')); if(Array.isArray(m)&&m.length===3) weightManualMinus=m.map(clamp); }catch(e){}
 })();
@@ -3779,10 +3797,10 @@ function renderWeightMode(){
   document.querySelectorAll('#wmGrid .rounds-stepper.wmst').forEach(st=>{
     const kind=st.dataset.g, band=+st.dataset.band;
     const mag=(kind==='plus'?weightManualPlus:weightManualMinus)[band];
-    const v=st.querySelector('.wmv'); if(v) v.textContent=(kind==='plus'?'+':'−')+mag;
+    const v=st.querySelector('.wmv'); if(v) v.textContent = mag===0 ? '0' : (kind==='plus'?'+':'−')+mag;
     const up=st.querySelector('.wmUp'), dn=st.querySelector('.wmDown');
     if(up) up.disabled = mag>=MAX_GEST;
-    if(dn) dn.disabled = mag<=MIN_GEST;
+    if(dn) dn.disabled = mag<=MIN_WM;
   });
 }
 function setWeightMode(m){
@@ -3792,7 +3810,7 @@ function setWeightMode(m){
   renderWeightMode();
 }
 function setWeightManual(kind, band, val){
-  val=Math.min(MAX_GEST,Math.max(MIN_GEST,val));
+  val=Math.min(MAX_GEST,Math.max(MIN_WM,val));
   if(kind==='plus'){ weightManualPlus[band]=val; localStorage.setItem('wm2_weight_manual_plus', JSON.stringify(weightManualPlus)); }
   else{ weightManualMinus[band]=val; localStorage.setItem('wm2_weight_manual_minus', JSON.stringify(weightManualMinus)); }
   renderWeightMode();
@@ -3882,11 +3900,27 @@ function navReplace(id){ try{ history.replaceState({s:id},''); }catch(e){} show(
 function goBack(){ try{ history.back(); }catch(e){ navReplace(user?'home':'name'); } }
 window.addEventListener('popstate', e=>{
   const s=(e.state&&e.state.s) || (user?'home':'name');
+  // Уходим ИЗ игры кнопкой «назад», а в игре уже собрана хотя бы одна пара?
+  // Не выходим сразу — спрашиваем подтверждение. _quitConfirmed выставляет
+  // кнопка «Выйти» в модалке, чтобы её собственный goBack прошёл насквозь.
+  const leavingGame = $('#game') && !$('#game').classList.contains('hide') && s!=='game';
+  if(leavingGame && g && (g.totalMatched||0)>0 && !_quitConfirmed){
+    try{ history.pushState({s:'game'},''); }catch(err){}   // вернуть запись истории — остаёмся на игре
+    openQuitConfirm();
+    return;
+  }
+  _quitConfirmed=false;
   if(g&&g.timerId) clearInterval(g.timerId);
   if(g&&g.mixTimer){ clearTimeout(g.mixTimer); g.mixTimer=null; }
   show(s);
   if(s==='home') refreshHome();
 });
+var _quitConfirmed=false;
+// Показать модалку «Выйти из игры?» (та же, что у кнопки ✕ в игре).
+function openQuitConfirm(){
+  try{ if(ttsOk) speechSynthesis.cancel(); }catch(e){}
+  const m=$('#quitModal'); if(m) m.classList.remove('hide');
+}
 
 // какие сотни выключены (0..49) у текущего игрока → отфильтровать слова
 function hundredOff(h){ return (user.offHundreds||[]).indexOf(h)!==-1; }
@@ -5983,12 +6017,9 @@ $('#againBtn').onclick=()=>{ closeResultModal(); startGame(true); };
 // тап по затемнённому фону модалки результатов — закрыть (останемся на главной)
 if($('#results')) $('#results').addEventListener('click', e=>{ if(e.target.id==='results') closeResultModal(); });
 function closeQuitModal(){ const m=$('#quitModal'); if(m) m.classList.add('hide'); }
-$('#quitBtn').onclick=()=>{
-  try{ if(ttsOk) speechSynthesis.cancel(); }catch(e){}   // глушим озвучку, чтобы диалог не конфликтовал
-  const m=$('#quitModal'); if(m) m.classList.remove('hide');
-};
+$('#quitBtn').onclick=openQuitConfirm;
 $('#quitNo').onclick=closeQuitModal;
-$('#quitYes').onclick=()=>{ closeQuitModal(); if(g&&g.timerId) clearInterval(g.timerId); goBack(); };
+$('#quitYes').onclick=()=>{ closeQuitModal(); _quitConfirmed=true; if(g&&g.timerId) clearInterval(g.timerId); goBack(); };
 $('#quitModal').addEventListener('click', e=>{ if(e.target.id==='quitModal') closeQuitModal(); });
 $('#rHomeBtn').onclick=()=>closeResultModal();
 $('#wordsBtn').onclick=()=>{ if(typeof gramSel!=='undefined' && gramSel!==null){ gdOpen('mine'); return; } setTab('weak'); navPush('words'); };
@@ -9487,7 +9518,7 @@ if ('serviceWorker' in navigator) {
    только APP_SUBVERSION (1 → 2…), крупные — APP_VERSION (92 → 93, а
    подверсию сбросить в 0 или 1). Сравнение идёт по APP_BUILD. */
 const APP_VERSION    = 93;   // основная версия (93 — разовый подъём: клиенты сборки «92» без подверсий видят только основную)
-const APP_SUBVERSION = 4;    // подверсия (1, 2, …)
+const APP_SUBVERSION = 5;    // подверсия (1, 2, …)
 const APP_BUILD = APP_VERSION*100 + APP_SUBVERSION;               // 9201
 const APP_VERSION_LABEL = APP_VERSION + '.' + APP_SUBVERSION;     // «92.1» — подверсия всегда в шапке
 
