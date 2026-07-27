@@ -4178,7 +4178,15 @@ function dedupArrange(arr, rows, getEn, getRu, conflEn, conflRu, pool){
         if(q>=0){ const tmp=arr[q]; arr[q]=arr[p]; arr[p]=tmp; changed=true; break; }
         // 2) из базы (последний раунд / донора нет)
         const c=fromPool(accEn, accRu);
-        if(c>=0){ arr[p]=c; changed=true; break; }
+        if(c>=0){
+          // v93.14: вытесненное слово НЕ теряем, а возвращаем в пул (в конец),
+          // чтобы оно попало в следующий раунд, где может не конфликтовать.
+          // Раньше arr[p]=c просто затирал idx — и «серые» слова, похожие на
+          // другие (общая подстрока EN/RU), навсегда выпадали из игр и
+          // оставались непройденными, сколько бы игр ни отыграл.
+          used.delete(idx); pool.push(idx);
+          arr[p]=c; changed=true; break;
+        }
         // замены нет — принимаем как есть, едем дальше
         accEn.push(getEn(idx)); accRu.push(getRu(idx));
       }
@@ -7843,6 +7851,20 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
         };
 
         // авто-выгрузка после каждой игры (тихо, если игрок залогинен в облако)
+        // Выгрузка ВЕСОВ (user_progress) текущего профиля. Вынесено отдельно, чтобы
+        // звать и из авто-выгрузки в конце игры (v93.11): раньше конец игры слал
+        // только статистику, а веса (собственно выученность слов) — нет, из-за чего
+        // между устройствами не доезжал именно прогресс по словам.
+        async function pushWeightsOnly(uid, u){
+            try{
+                const wRows = buildWeightRows(uid, u);
+                if(!wRows.length){ syncTrace('автовыгрузка','веса: нечего выгружать'); return true; }
+                const { error } = await supabase.from('user_progress').upsert(wRows, { onConflict:'user_id,mode_name,item_id' });
+                if(error){ syncTrace('автовыгрузка','веса: ОШИБКА (см. журнал)'); console.warn('Авто-выгрузка весов:', error.message||error); return false; }
+                syncTrace('автовыгрузка','веса: ok, '+wRows.length+' строк');
+                return true;
+            }catch(e){ syncTrace('автовыгрузка','веса: ИСКЛЮЧЕНИЕ'); console.warn('Авто-выгрузка весов:', e); return false; }
+        }
         window.cloudPushStats = async (playerName) => {
             try{
                 const { data:{ session } } = await supabase.auth.getSession();
@@ -7852,6 +7874,7 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
                 const raw = localStorage.getItem('wm2_user_' + name);
                 if(!raw) return;
                 const u = JSON.parse(raw);
+                const __uid = session.user.id;
 
                 // ---- v84: путь ДЕЛЬТ (серверные инкременты) ----
                 const base = getSyncBase(name);
@@ -7876,6 +7899,7 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
                             if(typeof user!=='undefined' && user && user.name===name){ user=loadUser(name); applyMode(); }
                         }
                         await window.cloudPushLeaderboard(name);   // рейтинг из принятых (объединённых) чисел
+                        await pushWeightsOnly(__uid, u);           // v93.11: веса тоже (иначе не доедут на другое устройство)
                         if(allOk){ try{ setSyncBase(name); }catch(e){} }
                         return;
                     }
@@ -7891,9 +7915,10 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
                 }
                 // рейтинг: публичная таблица (имя + суммарное число игр)
                 await window.cloudPushLeaderboard(name);
+                const wOk2 = await pushWeightsOnly(__uid, u);   // v93.11: веса тоже
                 // v83: базу сдвигаем ТОЛЬКО при успехе — иначе офлайн-дельта считалась бы
                 // «уже в облаке» и терялась при следующем слиянии
-                if(sOk){ try{ setSyncBase(name); }catch(e){} }
+                if(sOk && wOk2){ try{ setSyncBase(name); }catch(e){} }
             }catch(e){ console.error('Авто-выгрузка статистики не удалась:', e); }
         };
 
@@ -8466,7 +8491,8 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
                 o.dailyGreen = (row.daily_green && typeof row.daily_green==='object') ? row.daily_green : (o.dailyGreen || {});
                 o.dailyRed   = (row.daily_red   && typeof row.daily_red==='object')   ? row.daily_red   : (o.dailyRed   || {});
                 o.dailyLearned = (row.daily_learned && typeof row.daily_learned==='object') ? row.daily_learned : (o.dailyLearned || {});
-                o.seen      = Array.isArray(row.seen) ? row.seen : (o.seen || []);
+                // v93.13: union, а не перезапись — не теряем локальный список показанных
+                o.seen      = Array.from(new Set([...(Array.isArray(o.seen)?o.seen:[]), ...(Array.isArray(row.seen)?row.seen:[])]));
                 o.stats     = (row.stats && typeof row.stats === 'object') ? row.stats : (o.stats || {});
             });
             return {
@@ -8489,6 +8515,13 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
             // и уводил в СЛИЯНИЕ с собственными данными → задвоение. Теперь проверяем,
             // что значение реально записалось, и при неудаче повторяем один раз.
             let ok=false;
+            // v93.13: если в облаке УЖЕ ровно эта метка и то же имя — сетевой updateUser
+            // не нужен (убирает осцилляцию local_id и лишние запросы при каждом заходе).
+            try{
+                const { data:{ session } } = await supabase.auth.getSession();
+                const md = session && session.user && session.user.user_metadata;
+                if(md && md.local_id===lid && md.local_name===name) ok=true;
+            }catch(e){}
             for(let attempt=0; attempt<2 && !ok; attempt++){
                 try{
                     const { data, error } = await supabase.auth.updateUser({ data: { local_id: lid, local_name: name } });
@@ -8835,12 +8868,15 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
             const comb  = (x,y)=> isMax ? Math.max(x||0,y||0) : (x||0)+(y||0);
             dst.weights = dst.weights || {};
             for(const [k,v] of Object.entries(src.weights||{})){
+                // v93.12: различаем «нет ключа» (слово не оценивалось на этой стороне)
+                // и настоящий 0. Если ключа нет с одной стороны — берём значение
+                // другой как есть (и +выучено, и −недоучено переносятся, ничего не
+                // теряем). Если ключи есть с обеих сторон — знание побеждает: max,
+                // а min (пессимизм «недоучено») только когда ОБА отрицательные.
+                const aHas=Object.prototype.hasOwnProperty.call(dst.weights,k) && Number.isFinite(parseInt(dst.weights[k],10));
                 const a=parseInt(dst.weights[k],10), b=parseInt(v,10);
                 const av=Number.isFinite(a)?a:0, bv=Number.isFinite(b)?b:0;
-                // положительные веса = max («самый выученный»), но если хоть один
-                // отрицательный (проблемное слово) — берём более пессимистичный (min),
-                // чтобы слияние не стирало сигнал «недоучено».
-                dst.weights[k] = (av<0 || bv<0) ? Math.min(av,bv) : Math.max(av,bv);
+                dst.weights[k] = !aHas ? bv : ((av<0 && bv<0) ? Math.min(av,bv) : Math.max(av,bv));
             }
             dst.seen = Array.from(new Set([...(dst.seen||[]), ...(src.seen||[])]));
             dst.stats = dst.stats || {};
@@ -8922,7 +8958,10 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
                 // счётчики берём как max, веса/seen объединяем. Диалог не нужен: данные
                 // не теряются (для пустой локальной записи max-слияние = чистая загрузка
                 // из облака; для непустой — объединение без двойного счёта).
-                if(!cloudLid){
+                // v93.11: пустой ИЛИ чужой-непустой cloudLid при ТОМ ЖЕ uid — один
+                // аккаунт, метка local_id просто разъехалась между устройствами.
+                // Оба случая лечим одинаково: max-слияние без диалога и без задвоения.
+                if(!cloudLid || cloudLid !== deviceLid){
                     const ld = loadUser(name);
                     if(hasData){
                         const localPre = snapForUser(ld);     // счётчики ДО слияния
@@ -8941,7 +8980,7 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
                         if(typeof user!=='undefined' && user && user.name===name){ user=loadUser(name); applyMode(); }
                     }
                     await pushAllToCloud(uid, name);          // объединённое/локальное ⊇ облака → upsert безопасен
-                    await linkCloudToLocal(deviceLid, name);  // ставим метку, чтобы впредь шёл Сценарий 3
+                    await linkCloudToLocal(deviceLid, name);  // перепривязываем метку на ЭТО устройство → впредь Сценарий 3
                     showMsg(elSyncMsg, 'Аккаунт привязан, данные синхронизированы ✓', 'var(--green)');
                     return;
                 }
@@ -8993,7 +9032,7 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
                 // спрашиваем: объединить / заменить серверные / скачать с сервера
                 const ch = await askCloudChoice(
                     'В аккаунте уже есть прогресс',
-                    'У этого аккаунта уже сохранён прогресс (с другого устройства или записи). Что сделать с текущим локальным профилем «<b>'+escHtml(name)+'</b>»?',
+                    'У этого аккаунта уже сохранён прогресс (с другого устройства или записи). Что сделать с текущим локальным профилем «<b>'+escHtml(name)+'</b>»?<br><br><b>«Дополнить»</b> складывает счётчики игр и времени обеих записей — выбирайте его только если это ДВЕ РАЗНЫЕ истории. Для одного и того же профиля на двух устройствах выбирайте <b>«Скачать»</b> или просто кнопку синхронизации (там слияние без задвоения).',
                     [ {key:'merge',    label:'Дополнить (объединить)'},
                       {key:'replace',  label:'Заменить данные в облаке', cls:'danger'},
                       {key:'download', label:'Скачать с сервера (заменить локальные)', cls:'ghost'},
@@ -9735,7 +9774,7 @@ if ('serviceWorker' in navigator) {
    только APP_SUBVERSION (1 → 2…), крупные — APP_VERSION (92 → 93, а
    подверсию сбросить в 0 или 1). Сравнение идёт по APP_BUILD. */
 const APP_VERSION    = 93;   // основная версия (93 — разовый подъём: клиенты сборки «92» без подверсий видят только основную)
-const APP_SUBVERSION = 10;   // подверсия (1, 2, …)
+const APP_SUBVERSION = 14;   // подверсия (1, 2, …)
 const APP_BUILD = APP_VERSION*100 + APP_SUBVERSION;               // 9201
 const APP_VERSION_LABEL = APP_VERSION + '.' + APP_SUBVERSION;     // «92.1» — подверсия всегда в шапке
 
