@@ -1984,6 +1984,12 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
           <button class="btn ghost iconfit" id="diagRefresh" style="flex:1 1 30%;min-width:0"><svg class="ic"><use href="#ic-reset"/></svg><span class="btn-tx">Обновить</span></button>
           <button class="btn ghost iconfit" id="diagClose" style="flex:1 1 30%;min-width:0"><svg class="ic"><use href="#ic-x"/></svg><span class="btn-tx">Скрыть</span></button>
         </div>
+        <!-- Расширенная диагностика: прогон реальных тестов каждой таблицы БД
+             (add/read/delete/verify) + сохранение полного отчёта в файл .txt. -->
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+          <button class="btn ghost iconfit" id="diagDbTest" style="flex:1 1 45%;min-width:0"><svg class="ic"><use href="#ic-chart"/></svg><span class="btn-tx">Тест базы данных</span></button>
+          <button class="btn ghost iconfit" id="diagSave" style="flex:1 1 45%;min-width:0"><svg class="ic"><use href="#ic-clipboard"/></svg><span class="btn-tx">Сохранить в файл</span></button>
+        </div>
       </div>
       <!-- Журнал ошибок: всё, что приложение записало через appLog (сбои входа,
            регистрации, синхронизации, ошибки скриптов). Счётчик в названии
@@ -6236,7 +6242,8 @@ if($('#syncBtnRes'))  $('#syncBtnRes').onclick =()=>onSyncClick($('#syncBtnRes')
 // ---------- ДИАГНОСТИКА данных (Настройки → Профиль и данные) ----------
 // Собирает локальное состояние + реальное состояние облака в один текстовый отчёт,
 // который можно скопировать и прислать для отладки рассинхронизации.
-async function buildDiagReport(){
+async function buildDiagReport(opts){
+  opts=opts||{};
   const L=[];
   const padr=(s,n)=>{ s=String(s); return s.length>=n?s:s+' '.repeat(n-s.length); };
   let ver=''; try{ ver=((document.querySelector('.topbar .logo .by')||{}).textContent||'').trim(); }catch(e){}
@@ -6363,6 +6370,27 @@ async function buildDiagReport(){
   if(d.schemaDaily!==undefined) L.push('user_stats: daily-бакеты '+d.schemaDaily+(String(d.schemaDaily).indexOf('НЕТ')===0?'  ← недельные бакеты НЕ сохраняются в облако! (SQL lingoflip_user_stats_buckets)':''));
   if(d.schemaWeek!==undefined)  L.push('leaderboard: недельные колонки '+d.schemaWeek);
 
+  // --- СИНХРОНИЗАЦИЯ: ЭПОХА И ПРИВЯЗКА (диагноз потери прогресса между устройствами) ---
+  // Если эпоха облака НОВЕЕ локальной — это устройство при синхронизации примет
+  // облачный снимок ЦЕЛИКОМ (adoptCloudReplace) вместо слияния. Если облачный
+  // снимок старее, чем прогресс тут, — так теряются свежие A++ и т.п.
+  // Если cloudLocalId ≠ localId — устройство «не узнаёт себя» в облаке, срабатывает
+  // ветка восстановления привязки. Оба значения — ключ к «почему не доехало».
+  try{
+    if(typeof window.cloudSyncDebug==='function' && d.session){
+      const sd=await window.cloudSyncDebug(name);
+      L.push('');
+      L.push('— СИНХРОНИЗАЦИЯ: ЭПОХА И ПРИВЯЗКА —');
+      L.push('  локальная эпоха: '+sd.localEpoch+'   облачная эпоха: '+sd.cloudEpoch);
+      const cmp = (sd.cloudEpoch>sd.localEpoch) ? 'облако НОВЕЕ → это устройство при синке ПРИМЕТ облачный снимок целиком (не слияние!)'
+                : (sd.cloudEpoch<sd.localEpoch) ? 'локальная новее → это устройство навяжет своё состояние облаку'
+                : 'равны → обычное двустороннее слияние (норма)';
+      L.push('  вывод: '+cmp);
+      L.push('  localId устройства: '+sd.localId);
+      L.push('  localId в облаке:   '+sd.cloudLocalId+((sd.cloudLocalId&&sd.localId&&sd.cloudLocalId!==sd.localId)?'   ⚠ НЕ совпадает — устройство не узнаёт себя':''));
+    }
+  }catch(e){ L.push('— СИНХРОНИЗАЦИЯ: не удалось прочитать эпоху — '+e); }
+
   // --- РЕЙТИНГ ТЕКУЩЕЙ НЕДЕЛИ (что реально лежит в базе прямо сейчас) ---
   L.push('');
   L.push('— РЕЙТИНГ ТЕКУЩЕЙ НЕДЕЛИ (weekly_leaderboard) —');
@@ -6414,7 +6442,35 @@ async function buildDiagReport(){
     }
   }catch(e){}
   // подсказка: если тут не ноль — смотреть кнопку «Журнал ошибок» ниже
-  try{ if(typeof appLogCount==='function'){ L.push(''); L.push('записей в журнале ошибок: '+appLogCount()); } }catch(e){}
+  try{
+    if(typeof appLogGet==='function'){
+      const all=appLogGet(); L.push('');
+      L.push('— ЖУРНАЛ ОШИБОК (последние 10 из '+all.length+') —');
+      if(!all.length) L.push('  пусто — ошибок не записано.');
+      else all.slice(-10).forEach(r=> L.push('  ['+r.t+'] '+r.lv+' · '+r.w+' — '+r.m+(r.x?('  |  '+r.x):'')));
+    }
+  }catch(e){}
+
+  // --- САМОТЕСТ ТАБЛИЦ БД (только когда запущено кнопкой «Тест базы данных») ---
+  if(opts.dbtest && typeof window.cloudSelfTest==='function'){
+    L.push('');
+    L.push('— САМОТЕСТ ТАБЛИЦ БД (add / read / delete / verify) —');
+    try{
+      const t=await window.cloudSelfTest();
+      if(!t.ran){ L.push('  не выполнен: '+(t.reason||'нет сессии')); }
+      else{
+        for(const [name,r] of Object.entries(t.tables)){
+          L.push('  '+name+':  '+(r.ok?'РАБОЧАЯ ✓':'ПРОБЛЕМА ✗'));
+          L.push('     добавление: '+r.insert);
+          L.push('     чтение:     '+r.read);
+          L.push('     удаление:   '+r.delete);
+          L.push('     проверка:   '+r.verify);
+          if(r.error) L.push('     исключение: '+r.error);
+        }
+        L.push('  ИТОГ: '+(t.ok?'ВСЕ ТАБЛИЦЫ РАБОЧИЕ ✓':'ЕСТЬ ПРОБЛЕМЫ — см. выше ✗'));
+      }
+    }catch(e){ L.push('  ошибка самотеста: '+e); }
+  }
   return L.join('\n');
 }
 
@@ -6429,6 +6485,56 @@ async function runDiag(){
 if($('#diagBtn'))     $('#diagBtn').onclick=runDiag;
 if($('#diagRefresh')) $('#diagRefresh').onclick=runDiag;
 if($('#diagClose'))   $('#diagClose').onclick=()=>{ const p=$('#diagPanel'); if(p) p.classList.add('hide'); };
+
+// ---- Кнопка «Тест базы данных»: расширенный отчёт с реальными тестами таблиц.
+// Откат (cooldown) 10 секунд: тесты пишут/удаляют строки в БД, частые повторы
+// ни к чему. Каждый шаг теста уже пишется в трассировку (syncTrace) внутри
+// cloudSelfTest, поэтому попадает и в отчёт, и в сохранённый лог-файл.
+let _dbTestAt=0;
+if($('#diagDbTest')) $('#diagDbTest').onclick=async ()=>{
+  const btn=$('#diagDbTest'), lbl=btn.querySelector('.btn-tx'), txt=$('#diagText'), panel=$('#diagPanel');
+  const left=Math.ceil((10000-(Date.now()-_dbTestAt))/1000);
+  if(_dbTestAt && left>0){ if(lbl){ const o=lbl.textContent; lbl.textContent='Подождите '+left+' с'; setTimeout(()=>{ lbl.textContent=o; },1200);} return; }
+  _dbTestAt=Date.now();
+  if(panel) panel.classList.remove('hide');
+  if(txt) txt.textContent='Тестирую таблицы БД (add → read → delete → verify)…';
+  btn.disabled=true; const o=lbl?lbl.textContent:''; if(lbl) lbl.textContent='Тестирую…';
+  try{ if(txt) txt.textContent=await buildDiagReport({ dbtest:true }); }
+  catch(e){ if(txt) txt.textContent='Ошибка теста БД: '+e; }
+  finally{
+    if(lbl) lbl.textContent=o;
+    // держим кнопку заблокированной весь 10-сек откат
+    setTimeout(()=>{ btn.disabled=false; }, 10000);
+  }
+};
+
+// ---- Кнопка «Сохранить в файл»: полный отчёт → загрузка .txt
+// Имя: lingoflip_log_ГГГГ-ММ-ДД_ЧЧ-ММ-СС.txt. Сохраняет ТЕКУЩИЙ показанный
+// отчёт (если он уже собран) либо собирает свежий обычный отчёт.
+function diagFileName(){
+  const d=new Date(), z=n=>String(n).padStart(2,'0');
+  return 'lingoflip_log_'+d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate())
+        +'_'+z(d.getHours())+'-'+z(d.getMinutes())+'-'+z(d.getSeconds())+'.txt';
+}
+if($('#diagSave')) $('#diagSave').onclick=async ()=>{
+  const btn=$('#diagSave'), lbl=btn.querySelector('.btn-tx'), txt=$('#diagText'), panel=$('#diagPanel');
+  const o=lbl?lbl.textContent:'';
+  try{
+    if(panel) panel.classList.remove('hide');
+    // Если в панели ещё нет собранного отчёта — соберём свежий (без тестов БД).
+    let content=(txt && txt.textContent && txt.textContent.length>40 && txt.textContent.indexOf('Собираю')!==0 && txt.textContent.indexOf('Тестирую')!==0)
+      ? txt.textContent : null;
+    if(!content){ if(lbl) lbl.textContent='Собираю…'; content=await buildDiagReport(); if(txt) txt.textContent=content; }
+    const blob=new Blob([content], { type:'text/plain;charset=utf-8' });
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url; a.download=diagFileName();
+    document.body.appendChild(a); a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 1000);
+    if(lbl){ lbl.textContent='Сохранено ✓'; setTimeout(()=>{ lbl.textContent=o; }, 1600); }
+  }catch(e){
+    if(lbl){ lbl.textContent='Не удалось'; setTimeout(()=>{ lbl.textContent=o; }, 1600); }
+  }
+};
 if($('#diagCopy'))    $('#diagCopy').onclick=async ()=>{
   const txt=$('#diagText'), btn=$('#diagCopy'); if(!txt||!btn) return;
   const done=()=>{ btn.textContent='Скопировано ✓'; setTimeout(()=>{ btn.textContent='Скопировать'; },1500); };
@@ -8139,6 +8245,108 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
             return out;
         };
 
+        // ==== САМОТЕСТ ТАБЛИЦ БД (кнопка «Тест базы данных») ====
+        // Для КАЖДОЙ таблицы (user_progress, user_stats, leaderboard) прогоняет
+        // реальный цикл: добавление(upsert) → чтение → удаление → проверка удаления.
+        // Пишет строку в user_id текущей сессии со служебными пробными значениями
+        // (item_id/mode_name из «пробной» зоны), затем убирает их — на реальные
+        // данные игрока не влияет. Каждый шаг отражается в трассировке (syncTrace),
+        // поэтому попадает и в отчёт, и в сохранённый лог-файл.
+        window.cloudSelfTest = async () => {
+            const res = { ran:true, ts:new Date().toISOString(), tables:{}, ok:true };
+            let uid=null;
+            try{
+                const { data:{ session } } = await supabase.auth.getSession();
+                if(!session || !session.user){ res.ran=false; res.reason='нет сессии — войдите в аккаунт'; syncTrace('тест БД','пропуск: нет сессии'); return res; }
+                uid = session.user.id;
+            }catch(e){ res.ran=false; res.reason='сессия недоступна: '+((e&&e.message)||e); return res; }
+            syncTrace('тест БД','старт для uid '+uid.slice(0,8)+'…');
+
+            const TESTMODE='__selftest__';            // «пробная» зона: не пересекается с реальными режимами
+            const TESTITEM=2000000001;                // заведомо не настоящий item_id
+            const step=(t,m)=>syncTrace('тест БД',t+': '+m);
+            const tbl=(name)=>{ res.tables[name]={insert:'—',read:'—',delete:'—',verify:'—',ok:false}; return res.tables[name]; };
+
+            // ---- user_progress: insert → read → delete → verify ----
+            {
+              const T=tbl('user_progress');
+              try{
+                const w=Math.floor(Math.random()*90)+10;
+                const ins=await supabase.from('user_progress').upsert(
+                  [{user_id:uid,mode_name:TESTMODE,item_id:TESTITEM,weight:w}],{onConflict:'user_id,mode_name,item_id'});
+                T.insert = ins.error ? ('ОШИБКА: '+ins.error.message) : 'ok'; step('user_progress·insert', T.insert);
+                const rd=await supabase.from('user_progress').select('weight').eq('user_id',uid).eq('mode_name',TESTMODE).eq('item_id',TESTITEM).maybeSingle();
+                T.read = rd.error ? ('ОШИБКА: '+rd.error.message) : (rd.data && rd.data.weight===w ? 'ok (весы совпали)' : 'ЧИТАЕТСЯ, но значение не совпало');
+                step('user_progress·read', T.read);
+                const del=await supabase.from('user_progress').delete().eq('user_id',uid).eq('mode_name',TESTMODE).eq('item_id',TESTITEM);
+                T.delete = del.error ? ('ОШИБКА: '+del.error.message) : 'ok'; step('user_progress·delete', T.delete);
+                const vf=await supabase.from('user_progress').select('item_id',{count:'exact',head:true}).eq('user_id',uid).eq('mode_name',TESTMODE).eq('item_id',TESTITEM);
+                T.verify = vf.error ? ('ОШИБКА: '+vf.error.message) : ((vf.count||0)===0 ? 'ok (строка удалена)' : 'НЕ УДАЛЕНА ('+vf.count+' осталось)');
+                step('user_progress·verify', T.verify);
+                T.ok = /^ok/.test(T.insert)&&/^ok/.test(T.read)&&/^ok/.test(T.delete)&&/^ok/.test(T.verify);
+              }catch(e){ T.error=String(e); step('user_progress','ИСКЛЮЧЕНИЕ: '+e); }
+              if(!T.ok) res.ok=false;
+            }
+
+            // ---- user_stats: insert → read → delete → verify ----
+            {
+              const T=tbl('user_stats');
+              try{
+                const g=Math.floor(Math.random()*900)+100;
+                const ins=await supabase.from('user_stats').upsert(
+                  [{user_id:uid,mode_name:TESTMODE,games:g,rounds:1,words:0,total_time:0,updated_at:new Date().toISOString()}],{onConflict:'user_id,mode_name'});
+                T.insert = ins.error ? ('ОШИБКА: '+ins.error.message) : 'ok'; step('user_stats·insert', T.insert);
+                const rd=await supabase.from('user_stats').select('games').eq('user_id',uid).eq('mode_name',TESTMODE).maybeSingle();
+                T.read = rd.error ? ('ОШИБКА: '+rd.error.message) : (rd.data && rd.data.games===g ? 'ok (игры совпали)' : 'ЧИТАЕТСЯ, но значение не совпало');
+                step('user_stats·read', T.read);
+                const del=await supabase.from('user_stats').delete().eq('user_id',uid).eq('mode_name',TESTMODE);
+                T.delete = del.error ? ('ОШИБКА: '+del.error.message) : 'ok'; step('user_stats·delete', T.delete);
+                const vf=await supabase.from('user_stats').select('mode_name',{count:'exact',head:true}).eq('user_id',uid).eq('mode_name',TESTMODE);
+                T.verify = vf.error ? ('ОШИБКА: '+vf.error.message) : ((vf.count||0)===0 ? 'ok (строка удалена)' : 'НЕ УДАЛЕНА ('+vf.count+' осталось)');
+                step('user_stats·verify', T.verify);
+                T.ok = /^ok/.test(T.insert)&&/^ok/.test(T.read)&&/^ok/.test(T.delete)&&/^ok/.test(T.verify);
+              }catch(e){ T.error=String(e); step('user_stats','ИСКЛЮЧЕНИЕ: '+e); }
+              if(!T.ok) res.ok=false;
+            }
+
+            // ---- leaderboard: тут нельзя удалять реальную строку игрока (одна на uid).
+            // Поэтому проверяем НЕразрушающе: read текущей строки, upsert-обновление
+            // безопасного поля обратно тем же значением (проверка записи), повторное чтение.
+            {
+              const T=tbl('leaderboard'); T.delete='пропущено (строка игрока единственная — не удаляем)'; T.verify='n/a';
+              try{
+                const rd=await supabase.from('leaderboard').select('name,games,total_time,green,red').eq('user_id',uid).maybeSingle();
+                if(rd.error){ T.read='ОШИБКА: '+rd.error.message; step('leaderboard·read',T.read); }
+                else if(!rd.data){ T.read='строки нет (ещё не публиковалась)'; T.insert='n/a'; step('leaderboard·read',T.read); }
+                else{
+                  T.read='ok (name='+rd.data.name+', games='+rd.data.games+')'; step('leaderboard·read',T.read);
+                  // запись: возвращаем те же значения (идемпотентно) — проверяем, что upsert проходит
+                  const up=await supabase.from('leaderboard').upsert(
+                    [{user_id:uid,name:rd.data.name,games:rd.data.games,total_time:rd.data.total_time,green:rd.data.green,red:rd.data.red,updated_at:new Date().toISOString()}],{onConflict:'user_id'});
+                  T.insert = up.error ? ('ОШИБКА записи: '+up.error.message) : 'ok (запись прошла, данные не изменены)';
+                  step('leaderboard·write', T.insert);
+                }
+                T.ok = /^ok/.test(T.read)&&(/^ok/.test(T.insert)||T.insert==='n/a');
+              }catch(e){ T.error=String(e); step('leaderboard','ИСКЛЮЧЕНИЕ: '+e); }
+              if(!T.ok) res.ok=false;
+            }
+
+            syncTrace('тест БД','итог: '+(res.ok?'ВСЕ ТАБЛИЦЫ РАБОЧИЕ ✓':'ЕСТЬ ПРОБЛЕМЫ ✗'));
+            return res;
+        };
+
+        // Эпоха синхронизации и localid — на поверхность для диагностики (диагноз
+        // «почему устройство приняло чужой снимок как эталон»).
+        window.cloudSyncDebug = async (name) => {
+            const out={};
+            try{ out.localEpoch = getLocalEpoch(name); }catch(e){ out.localEpoch='?'; }
+            try{ out.cloudEpoch = await getCloudEpoch(); }catch(e){ out.cloudEpoch='?'; }
+            try{ out.localId = ensureLocalId(); }catch(e){ out.localId='?'; }
+            try{ const { data } = await supabase.auth.getUser();
+                 out.cloudLocalId = (data&&data.user&&data.user.user_metadata&&data.user.user_metadata.local_id)||'(нет)'; }catch(e){ out.cloudLocalId='?'; }
+            return out;
+        };
+
         // ---- модалка авторизации (для кнопки синхронизации, когда нет аккаунта) ----
         window.openAuthModal = () => {
             const u=$('#modal-username'), p=$('#modal-password'), msg=$('#modal-auth-msg');
@@ -9527,7 +9735,7 @@ if ('serviceWorker' in navigator) {
    только APP_SUBVERSION (1 → 2…), крупные — APP_VERSION (92 → 93, а
    подверсию сбросить в 0 или 1). Сравнение идёт по APP_BUILD. */
 const APP_VERSION    = 93;   // основная версия (93 — разовый подъём: клиенты сборки «92» без подверсий видят только основную)
-const APP_SUBVERSION = 9;    // подверсия (1, 2, …)
+const APP_SUBVERSION = 10;   // подверсия (1, 2, …)
 const APP_BUILD = APP_VERSION*100 + APP_SUBVERSION;               // 9201
 const APP_VERSION_LABEL = APP_VERSION + '.' + APP_SUBVERSION;     // «92.1» — подверсия всегда в шапке
 
