@@ -1415,6 +1415,15 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
 .qm-row .btn{flex:1 1 0;width:auto}
 .qm-col{display:flex;flex-direction:column;gap:10px}
 .qm-col .btn{width:100%;margin-top:0}
+
+/* Кнопки, умеющие «схлопываться» до иконки, если подпись не влезает
+   (только узкие кнопки в рядах; на .block/.big правило не действует —
+   там всегда полный текст). Схлопывание ставит JS (fitIconButtons),
+   добавляя класс .tx-hidden, когда реальная ширина текста больше кнопки. */
+.btn.iconfit.tx-hidden{gap:0;padding-left:0;padding-right:0}
+.btn.iconfit.tx-hidden .btn-tx{display:none}
+.btn.iconfit .btn-tx{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.btn.iconfit.block .btn-tx,.btn.iconfit.big .btn-tx{white-space:normal}
 .qm-msg{font-size:calc(13px * var(--fs,1));font-weight:800;margin-top:12px;min-height:0;line-height:1.3}
 .lp-info{margin:6px 0 14px;text-align:left}
 .lp-name{font-size:calc(15px * var(--fs,1));font-weight:800;color:var(--ink);margin-bottom:8px}
@@ -1970,10 +1979,10 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
       <button class="btn ghost block" id="diagBtn"><svg class="ic"><use href="#ic-chart"/></svg>Проверить данные (диагностика)</button>
       <div id="diagPanel" class="hide" style="margin-top:10px">
         <pre id="diagText" style="white-space:pre-wrap;word-break:break-word;font:11px/1.45 ui-monospace,Menlo,Consolas,monospace;background:rgba(0,0,0,.05);border:1px solid rgba(0,0,0,.14);border-radius:10px;padding:10px;max-height:360px;overflow:auto;margin:0;color:inherit">—</pre>
-        <div style="display:flex;gap:8px;margin-top:8px">
-          <button class="btn ghost" id="diagCopy" style="flex:1"><svg class="ic"><use href="#ic-clipboard"/></svg>Скопировать</button>
-          <button class="btn ghost" id="diagRefresh" style="flex:1"><svg class="ic"><use href="#ic-reset"/></svg>Обновить</button>
-          <button class="btn ghost" id="diagClose" style="flex:1"><svg class="ic"><use href="#ic-x"/></svg>Скрыть</button>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+          <button class="btn ghost iconfit" id="diagCopy" style="flex:1 1 30%;min-width:0"><svg class="ic"><use href="#ic-clipboard"/></svg><span class="btn-tx">Скопировать</span></button>
+          <button class="btn ghost iconfit" id="diagRefresh" style="flex:1 1 30%;min-width:0"><svg class="ic"><use href="#ic-reset"/></svg><span class="btn-tx">Обновить</span></button>
+          <button class="btn ghost iconfit" id="diagClose" style="flex:1 1 30%;min-width:0"><svg class="ic"><use href="#ic-x"/></svg><span class="btn-tx">Скрыть</span></button>
         </div>
       </div>
       <!-- Журнал ошибок: всё, что приложение записало через appLog (сбои входа,
@@ -1983,10 +1992,10 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
       <div id="logPanel" class="hide" style="margin-top:10px">
         <pre id="logText" style="white-space:pre-wrap;word-break:break-word;font:11px/1.45 ui-monospace,Menlo,Consolas,monospace;background:rgba(0,0,0,.05);border:1px solid rgba(0,0,0,.14);border-radius:10px;padding:10px;max-height:360px;overflow:auto;margin:0;color:inherit">—</pre>
         <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-          <button class="btn ghost" id="logCopy" style="flex:1 1 45%"><svg class="ic"><use href="#ic-clipboard"/></svg>Скопировать</button>
-          <button class="btn ghost" id="logRefresh" style="flex:1 1 45%"><svg class="ic"><use href="#ic-reset"/></svg>Обновить</button>
-          <button class="btn ghost" id="logClear" style="flex:1 1 45%"><svg class="ic"><use href="#ic-x"/></svg>Очистить</button>
-          <button class="btn ghost" id="logClose" style="flex:1 1 45%"><svg class="ic"><use href="#ic-chevu"/></svg>Скрыть</button>
+          <button class="btn ghost iconfit" id="logCopy" style="flex:1 1 45%;min-width:0"><svg class="ic"><use href="#ic-clipboard"/></svg><span class="btn-tx">Скопировать</span></button>
+          <button class="btn ghost iconfit" id="logRefresh" style="flex:1 1 45%;min-width:0"><svg class="ic"><use href="#ic-reset"/></svg><span class="btn-tx">Обновить</span></button>
+          <button class="btn ghost iconfit" id="logClear" style="flex:1 1 45%;min-width:0"><svg class="ic"><use href="#ic-x"/></svg><span class="btn-tx">Очистить</span></button>
+          <button class="btn ghost iconfit" id="logClose" style="flex:1 1 45%;min-width:0"><svg class="ic"><use href="#ic-chevu"/></svg><span class="btn-tx">Скрыть</span></button>
         </div>
       </div>
       <!-- Проверка обновлений приложения: тянет свежий index.html с сервера в обход
@@ -2395,9 +2404,9 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
       <div class="qm-title" id="geTitle">Редактирование задания</div>
       <div class="ge-modal-body" id="geBody"></div>
       <div class="qm-row" style="gap:8px">
-        <button class="btn ghost" id="geReset" style="flex:1"><svg class="ic"><use href="#ic-reset"/></svg>Сбросить правку</button>
-        <button class="btn ghost" id="geCancel" style="flex:1"><svg class="ic"><use href="#ic-x"/></svg>Отмена</button>
-        <button class="btn" id="geSave" style="flex:1.3"><svg class="ic"><use href="#ic-check"/></svg>Сохранить</button>
+        <button class="btn ghost iconfit" id="geReset" style="flex:1"><svg class="ic"><use href="#ic-reset"/></svg><span class="btn-tx">Сбросить правку</span></button>
+        <button class="btn ghost iconfit" id="geCancel" style="flex:1"><svg class="ic"><use href="#ic-x"/></svg><span class="btn-tx">Отмена</span></button>
+        <button class="btn iconfit" id="geSave" style="flex:1.3"><svg class="ic"><use href="#ic-check"/></svg><span class="btn-tx">Сохранить</span></button>
       </div>
     </div>
   </div>
@@ -2484,8 +2493,8 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
     <div class="qm-title">Выйти из игры?</div>
     <div class="qm-text">Результат не сохранится — веса пишутся только в конце игры.</div>
     <div class="qm-row">
-      <button class="btn ghost" id="quitNo"><svg class="ic"><use href="#ic-check"/></svg>Остаться</button>
-      <button class="btn" id="quitYes"><svg class="ic"><use href="#ic-x"/></svg>Выйти</button>
+      <button class="btn ghost iconfit" id="quitNo"><svg class="ic"><use href="#ic-check"/></svg><span class="btn-tx">Остаться</span></button>
+      <button class="btn iconfit" id="quitYes"><svg class="ic"><use href="#ic-x"/></svg><span class="btn-tx">Выйти</span></button>
     </div>
   </div>
 </div>
@@ -9518,7 +9527,7 @@ if ('serviceWorker' in navigator) {
    только APP_SUBVERSION (1 → 2…), крупные — APP_VERSION (92 → 93, а
    подверсию сбросить в 0 или 1). Сравнение идёт по APP_BUILD. */
 const APP_VERSION    = 93;   // основная версия (93 — разовый подъём: клиенты сборки «92» без подверсий видят только основную)
-const APP_SUBVERSION = 6;    // подверсия (1, 2, …)
+const APP_SUBVERSION = 7;    // подверсия (1, 2, …)
 const APP_BUILD = APP_VERSION*100 + APP_SUBVERSION;               // 9201
 const APP_VERSION_LABEL = APP_VERSION + '.' + APP_SUBVERSION;     // «92.1» — подверсия всегда в шапке
 
@@ -9760,6 +9769,43 @@ window.addEventListener('online', function(){ setTimeout(function(){ updTick(0.5
 // …и просто по времени: приложение может жить открытым часами без единого
 // сворачивания — раз в 5 минут смотрим, не пора ли (интервал: 30 минут).
 setInterval(function(){ updTick(30); }, 5*60*1000);
+
+// ===== Схлопывание узких кнопок до иконки при нехватке места =====
+// Правило только для кнопок .btn.iconfit (узкие, в рядах). Кнопки на всю
+// ширину (.block/.big) исключены — у них всегда полный текст.
+(function(){
+  function fitOne(btn){
+    if(btn.classList.contains('block')||btn.classList.contains('big')) return;
+    var tx=btn.querySelector('.btn-tx'); if(!tx) return;
+    btn.classList.remove('tx-hidden');
+    var cs=getComputedStyle(btn);
+    var padX=parseFloat(cs.paddingLeft)+parseFloat(cs.paddingRight);
+    var gap=parseFloat(cs.gap)||0;
+    var ic=btn.querySelector('.ic');
+    var icW=ic?ic.getBoundingClientRect().width:0;
+    var need=icW+(icW?gap:0)+tx.scrollWidth+padX+1;
+    if(need>btn.clientWidth+0.5) btn.classList.add('tx-hidden');
+  }
+  function fitAll(){
+    var list=document.querySelectorAll('.btn.iconfit');
+    for(var i=0;i<list.length;i++){ var b=list[i]; if(!b.offsetParent) continue; fitOne(b); }
+  }
+  window.fitIconButtons=fitAll;
+  var t=null;
+  function schedule(){ if(t) cancelAnimationFrame(t); t=requestAnimationFrame(fitAll); }
+  window.addEventListener('resize', schedule);
+  window.addEventListener('orientationchange', schedule);
+  ['diagBtn','logBtn'].forEach(function(id){
+    var b=document.getElementById(id);
+    if(b) b.addEventListener('click', function(){ setTimeout(fitAll, 30); });
+  });
+  document.addEventListener('click', function(e){
+    if(e.target && e.target.closest && e.target.closest('#gEditBtn,#quitBtn,#actSetBtn')) setTimeout(fitAll, 30);
+  }, true);
+  if(document.readyState!=='loading') setTimeout(fitAll,60);
+  else document.addEventListener('DOMContentLoaded', function(){ setTimeout(fitAll,60); });
+})();
+
 // …при выходе на главный экран (конец игры, возврат из настроек): дешёвая
 // точка «между делами», лимит 10 минут. Обёртка не ломает навигацию:
 // сам вызов show выполняется как раньше, проверка — отдельно и в try.
