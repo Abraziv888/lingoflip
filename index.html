@@ -6291,7 +6291,8 @@ async function buildDiagReport(opts){
         const g=o.games||0; localSum+=g;
         const seen=Array.isArray(o.seen)?o.seen.length:0;
         const wts=o.weights?Object.keys(o.weights).length:0;
-        L.push('  '+padr(m,8)+' игр='+padr(g,4)+' раундов='+padr(o.rounds||0,4)+' пройдено='+padr(seen,4)+' весов='+padr(wts,4)+' время='+Math.round(o.totalTime||0)+'с');
+        let wnz=0; if(o.weights){ for(const k in o.weights){ if(parseInt(o.weights[k],10)) wnz++; } }
+        L.push('  '+padr(m,8)+' игр='+padr(g,4)+' раундов='+padr(o.rounds||0,4)+' пройдено='+padr(seen,4)+' весов='+padr(wts,4)+' (ненул='+wnz+') время='+Math.round(o.totalTime||0)+'с');
       });
       L.push('СУММА игр локально (уходит в рейтинг): '+localSum);
       // недельные числа из ЛОКАЛЬНЫХ посуточных бакетов — именно они уходят в
@@ -6370,6 +6371,18 @@ async function buildDiagReport(opts){
     else if(!us.length) L.push('user_stats: пусто (0 строк)');
     else{ L.push('user_stats:'); us.forEach(r=> L.push('  '+padr(r.mode_name||'?',8)+' игр='+padr(r.games,4)+' раундов='+padr(r.rounds,4)+' слов='+padr(r.words,4)+' время='+padr(r.total_time,5)+'с upd='+r.updated_at)); }
     L.push('user_progress (весов в облаке): '+d.user_progress_count);
+    // v93.16: отпечаток локального прогресса — сравни это число на двух устройствах.
+    // Совпало на обоих → прогресс идентичен (веса, нулевые, seen — всё).
+    try{
+      if(typeof progFingerprint==='function'){
+        const fp=progFingerprint(u);
+        L.push('ОТПЕЧАТОК прогресса (должен совпасть на всех устройствах после синка):');
+        L.push('  ВСЕ: ключей='+fp.__all.keys+' сумма='+fp.__all.sum+' seen='+fp.__all.seen);
+        ['words','phrases','pairs','verbs','verbs_top','verbs_irr','verbs_pair'].forEach(m=>{
+          if(fp[m] && (fp[m].keys||fp[m].seen)) L.push('  '+padr(m,10)+' ключей='+padr(fp[m].keys,4)+' сумма='+padr(fp[m].sum,12)+' seen='+fp[m].seen);
+        });
+      }
+    }catch(e){}
   }
   // --- СХЕМА И СВЯЗЬ ---
   L.push('');
@@ -8443,6 +8456,14 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
                 supabase.from('user_progress').select('mode_name, item_id, weight').eq('user_id', userId),
                 supabase.from('user_stats').select('*').eq('user_id', userId)
             ]);
+            // v93.15: делаем фазу ЗАГРУЗКИ видимой в трассировке (раньше она молчала,
+            // и в логе казалось, что синхронизация только выгружает).
+            try{
+                if(wRes.error) syncTrace('загрузка','веса: ОШИБКА (см. журнал)');
+                else syncTrace('загрузка','веса: ok, '+((wRes.data||[]).length)+' строк с сервера');
+                if(sRes.error) syncTrace('загрузка','статистика: ОШИБКА');
+                else syncTrace('загрузка','статистика: ok, '+((sRes.data||[]).length)+' режимов');
+            }catch(e){}
             // веса
             ld.weights = ld.weights || {};
             if (!ld.phr)   ld.phr   = { weights: {} };
@@ -8552,6 +8573,24 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
                                                    agames:o.agames||0, arounds:o.arounds||0,
                                                    seenLen:(Array.isArray(o.seen)?o.seen.length:0),
                                                    buckets:bucketSnap(o) }; }
+        // v93.16: детерминированный отпечаток прогресса — чтобы одним взглядом
+        // сравнить два устройства «всё ли идентично». Считает по КАЖДОМУ режиму:
+        // число ключей весов, контрольную сумму (Σ id*1000003 + weight по всем
+        // ключам, включая нулевые), число seen. Порядок ключей не важен (сумма).
+        function progFingerprint(u){
+            const modes=[['words',u],['phrases',u&&u.phr],['pairs',u&&u.pairs],['verbs',u&&u.verbs],
+                         ['verbs_top',u&&u.verbsTop],['verbs_irr',u&&u.verbsIrr],['verbs_pair',u&&u.verbsPair]];
+            const out={}; let allKeys=0, allSum=0, allSeen=0;
+            for(const [name,o] of modes){
+                let keys=0, sum=0, seen=0;
+                if(o && o.weights){ for(const k in o.weights){ const id=parseInt(k,10); const w=parseInt(o.weights[k],10);
+                    if(!Number.isFinite(id)) continue; keys++; sum=(sum + id*1000003 + (Number.isFinite(w)?w:0))>>>0; } }
+                if(o && Array.isArray(o.seen)) seen=o.seen.length;
+                out[name]={keys,sum:sum>>>0,seen}; allKeys+=keys; allSum=(allSum+sum)>>>0; allSeen+=seen;
+            }
+            out.__all={keys:allKeys,sum:allSum>>>0,seen:allSeen};
+            return out;
+        }
         function snapForUser(u){ const s={v:2}; SB_MODES.forEach(([k,prop])=>{ s[k]=counterSnap(prop?u[prop]:u); }); return s; }
         function getSyncBase(nm){ try{ const s=JSON.parse(localStorage.getItem(SB_KEY(nm))); return (s&&typeof s==='object')?s:null; }catch(e){ return null; } }
         function setSyncBase(nm){ try{ const raw=localStorage.getItem('wm2_user_'+nm); if(!raw) return; localStorage.setItem(SB_KEY(nm), JSON.stringify(snapForUser(JSON.parse(raw)))); }catch(e){} }
@@ -8803,7 +8842,13 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
                 // затрём чужие данные), а честно сообщаем об ошибке.
                 throw (r.error.message ? r.error : new Error(String(r.error)));
             }
+            // v93.15: считаем ненулевые веса «слова» до и после слияния — чтобы в
+            // трассировке было видно, что загрузка реально что-то добавила/изменила.
+            const cntNZ = o => { let n=0; for(const k in (o||{})){ if(parseInt(o[k],10)) n++; } return n; };
+            const wBefore = cntNZ(ld.weights);
             mergeInto(ld, cloud, 'max');              // веса/seen/посуточные — объединение без удвоения
+            const wAfter = cntNZ(ld.weights);
+            try{ syncTrace('слияние','веса «слова»: было '+wBefore+' → стало '+wAfter+' ненулевых'+(wAfter>wBefore?(' (+'+(wAfter-wBefore)+' с сервера)'):(wAfter===wBefore?' (совпали)':''))); }catch(e){}
             if(base) applyDeltaCounters(ld, cloud, base, localPre);  // all-time = cloud + офлайн-дельта
             // выбор наборов: побеждает более позднее изменение (по метке ts)
             try{
@@ -8821,6 +8866,24 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
             const pushed = await pushAllToCloud(uid, name);   // объединённое ⊇ облака; рейтинг публикуется
                                                       // уже с ОБЪЕДИНЁННЫМИ посуточными бакетами,
                                                       // поэтому week_base/недельное время считаются честно
+            // v93.16: контрольная сверка идентичности. Перечитываем облако и сравниваем
+            // отпечаток локали с отпечатком облака. Совпали — состояние идентично; нет —
+            // логируем расхождение по режимам (тогда видно, что именно не сошлось).
+            try{
+                const after = loadUser(name);
+                const cloudChk = freshUserSkeleton(name);
+                await cloudFetchInto(cloudChk, uid);
+                const fpL = progFingerprint(after), fpC = progFingerprint(cloudChk);
+                const same = fpL.__all.keys===fpC.__all.keys && fpL.__all.sum===fpC.__all.sum;
+                if(same) syncTrace('сверка','идентично ✓ (ключей='+fpL.__all.keys+', seen='+fpL.__all.seen+')');
+                else{
+                    syncTrace('сверка','РАСХОЖДЕНИЕ: локаль ключей='+fpL.__all.keys+'/sum='+fpL.__all.sum+' ↔ облако ключей='+fpC.__all.keys+'/sum='+fpC.__all.sum);
+                    for(const m of ['words','phrases','pairs','verbs','verbs_top','verbs_irr','verbs_pair']){
+                        if(fpL[m].keys!==fpC[m].keys || fpL[m].sum!==fpC[m].sum)
+                            syncTrace('сверка','  '+m+': локаль '+fpL[m].keys+'к/'+fpL[m].sum+' ↔ облако '+fpC[m].keys+'к/'+fpC[m].sum);
+                    }
+                }
+            }catch(e){ syncTrace('сверка','не удалось сверить: '+((e&&e.message)||e)); }
             // если пришли сюда из ветки «эпоха новее, но облако пусто» — после
             // успешного восстановления облака принимаем эпоху, чтобы не зациклиться
             if(pushed && cloudEp > getLocalEpoch(name)) setLocalEpoch(name, cloudEp);
@@ -9774,7 +9837,7 @@ if ('serviceWorker' in navigator) {
    только APP_SUBVERSION (1 → 2…), крупные — APP_VERSION (92 → 93, а
    подверсию сбросить в 0 или 1). Сравнение идёт по APP_BUILD. */
 const APP_VERSION    = 93;   // основная версия (93 — разовый подъём: клиенты сборки «92» без подверсий видят только основную)
-const APP_SUBVERSION = 14;   // подверсия (1, 2, …)
+const APP_SUBVERSION = 16;   // подверсия (1, 2, …)
 const APP_BUILD = APP_VERSION*100 + APP_SUBVERSION;               // 9201
 const APP_VERSION_LABEL = APP_VERSION + '.' + APP_SUBVERSION;     // «92.1» — подверсия всегда в шапке
 
