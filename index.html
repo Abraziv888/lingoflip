@@ -4140,9 +4140,10 @@ function conflRuPhraseL(a,b){ return conflRuPhrase(a.v,b.v) || conflRuPhrase(a.e
 // Основной движок: расставляет arr (индексы) по раундам длиной rows так,
 // чтобы внутри раунда не было конфликтов. getEn/getRu — ключи строки,
 // conflEn/conflRu — предикаты, pool — запас «из базы» (индексы вне игры).
-function dedupArrange(arr, rows, getEn, getRu, conflEn, conflRu, pool){
+function dedupArrange(arr, rows, getEn, getRu, conflEn, conflRu, pool, protectedSet){
   if(!arr.length || rows<=0) return arr;
   pool = pool || [];
+  const prot = protectedSet || new Set();
   const used = new Set(arr);
   let pp = 0;
   // конфликтует ли idx с уже принятыми в раунде (сначала EN, потом RU)
@@ -4172,22 +4173,34 @@ function dedupArrange(arr, rows, getEn, getRu, conflEn, conflRu, pool){
       for(let p=start;p<end;p++){
         const idx=arr[p];
         if(!conflicts(idx, accEn, accRu)){ accEn.push(getEn(idx)); accRu.push(getRu(idx)); continue; }
+        // v93.18: конфликтует СВЕЖЕЕ (непоказанное) слово — не выбрасываем его,
+        // а убираем из этого раунда обычное (незащищённое) конфликтное слово,
+        // освободив место свежему.
+        if(prot.has(idx)){
+          let swapped=false;
+          for(let a=start;a<p;a++){
+            if(!prot.has(arr[a]) && (conflEn(getEn(idx),getEn(arr[a])) || conflRu(getRu(idx),getRu(arr[a])))){
+              const tmp=arr[a]; arr[a]=arr[p]; arr[p]=tmp; changed=true; swapped=true; break;
+            }
+          }
+          if(swapped) break;
+        }
         // 1) замена из следующего раунда (своп)
         let q=-1;
         for(let t=end;t<arr.length;t++){ if(!conflicts(arr[t], accEn, accRu)){ q=t; break; } }
         if(q>=0){ const tmp=arr[q]; arr[q]=arr[p]; arr[p]=tmp; changed=true; break; }
         // 2) из базы (последний раунд / донора нет)
+        // v93.18: свежее (непоказанное) слово НЕ вытесняем в пул — иначе оно
+        // конфликтует каждую игру и никогда не показывается. Принимаем как есть
+        // (лёгкое пересечение допустимо), лишь бы показать.
+        if(prot.has(idx)){ accEn.push(getEn(idx)); accRu.push(getRu(idx)); continue; }
         const c=fromPool(accEn, accRu);
         if(c>=0){
-          // v93.14: вытесненное слово НЕ теряем, а возвращаем в пул (в конец),
-          // чтобы оно попало в следующий раунд, где может не конфликтовать.
-          // Раньше arr[p]=c просто затирал idx — и «серые» слова, похожие на
-          // другие (общая подстрока EN/RU), навсегда выпадали из игр и
-          // оставались непройденными, сколько бы игр ни отыграл.
+          // вытесненное обычное слово возвращаем в пул (в конец) — попадёт в
+          // следующий раунд, где может не конфликтовать (v93.14).
           used.delete(idx); pool.push(idx);
           arr[p]=c; changed=true; break;
         }
-        // замены нет — принимаем как есть, едем дальше
         accEn.push(getEn(idx)); accRu.push(getRu(idx));
       }
       if(!changed) break;
@@ -4201,10 +4214,14 @@ function arrangeRounds(entries, rows){
   const arr=entries.slice();
   const inGame=new Set(arr);
   const pool=enabledIndices().filter(i=>!inGame.has(i));  // запас «из базы» (без мастеред)
+  // v93.18: свежие (непоказанные) слова защищаем от вытеснения дедупом —
+  // иначе 4-6 «похожих» слов конфликтуют каждую игру и остаются серыми навсегда.
+  let protectedFresh=null;
+  try{ const ss=seenSetOf(); protectedFresh=new Set(arr.filter(i=>!isPassed(i,ss))); }catch(e){}
   return dedupArrange(arr, rows,
     idx=>normEnWord(DECK[idx][0]),
     idx=>normRuFirst(transOf(idx)),
-    conflEnWord, conflRuWord, pool);
+    conflEnWord, conflRuWord, pool, protectedFresh);
 }
 // Включить весь словарь для текущего режима (General вкл, все наборы/сотни вкл)
 function enableWholeDictionary(){
@@ -9859,7 +9876,7 @@ if ('serviceWorker' in navigator) {
    только APP_SUBVERSION (1 → 2…), крупные — APP_VERSION (92 → 93, а
    подверсию сбросить в 0 или 1). Сравнение идёт по APP_BUILD. */
 const APP_VERSION    = 93;   // основная версия (93 — разовый подъём: клиенты сборки «92» без подверсий видят только основную)
-const APP_SUBVERSION = 17;   // подверсия (1, 2, …)
+const APP_SUBVERSION = 18;   // подверсия (1, 2, …)
 const APP_BUILD = APP_VERSION*100 + APP_SUBVERSION;               // 9201
 const APP_VERSION_LABEL = APP_VERSION + '.' + APP_SUBVERSION;     // «92.1» — подверсия всегда в шапке
 
