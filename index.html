@@ -8452,8 +8452,30 @@ $('#bkImportText').onclick=()=>{ const t=$('#bkPaste').value.trim(); if(!t){ ale
         // в нормализованный объект игрока ld (мутирует его). Один источник истины
         // для обоих путей загрузки: и из настроек, и при входе с экрана имени.
         async function cloudFetchInto(ld, userId) {
+            // v93.17: user_progress читаем ПОСТРАНИЧНО. PostgREST/Supabase по умолчанию
+            // отдаёт максимум 1000 строк на запрос — а весов в облаке 3000+. Раньше
+            // select без пагинации возвращал только первую 1000, из-за чего слияние
+            // видело огрызок облака и устройства НИКОГДА не сходились (и часть весов,
+            // включая выученные слова за пределами первой 1000, просто не подтягивалась).
+            async function fetchAllProgress(uid){
+                const PAGE=1000; let from=0, all=[], lastErr=null;
+                for(;;){
+                    const r=await supabase.from('user_progress')
+                        .select('mode_name, item_id, weight')
+                        .eq('user_id', uid)
+                        .order('item_id',{ascending:true})   // стабильный порядок для пагинации
+                        .range(from, from+PAGE-1);
+                    if(r.error){ lastErr=r.error; break; }
+                    const chunk=r.data||[];
+                    all=all.concat(chunk);
+                    if(chunk.length<PAGE) break;              // последняя страница
+                    from+=PAGE;
+                    if(from>200000) break;                    // предохранитель от бесконечного цикла
+                }
+                return { data: all, error: lastErr };
+            }
             const [wRes, sRes] = await Promise.all([
-                supabase.from('user_progress').select('mode_name, item_id, weight').eq('user_id', userId),
+                fetchAllProgress(userId),
                 supabase.from('user_stats').select('*').eq('user_id', userId)
             ]);
             // v93.15: делаем фазу ЗАГРУЗКИ видимой в трассировке (раньше она молчала,
@@ -9837,7 +9859,7 @@ if ('serviceWorker' in navigator) {
    только APP_SUBVERSION (1 → 2…), крупные — APP_VERSION (92 → 93, а
    подверсию сбросить в 0 или 1). Сравнение идёт по APP_BUILD. */
 const APP_VERSION    = 93;   // основная версия (93 — разовый подъём: клиенты сборки «92» без подверсий видят только основную)
-const APP_SUBVERSION = 16;   // подверсия (1, 2, …)
+const APP_SUBVERSION = 17;   // подверсия (1, 2, …)
 const APP_BUILD = APP_VERSION*100 + APP_SUBVERSION;               // 9201
 const APP_VERSION_LABEL = APP_VERSION + '.' + APP_SUBVERSION;     // «92.1» — подверсия всегда в шапке
 
