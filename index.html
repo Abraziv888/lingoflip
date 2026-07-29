@@ -5341,7 +5341,19 @@ function refreshHome(){
   $('#covRed').textContent=plural(gRed);
   $('#covZero').textContent=plural(gZero);
   const scope=scopeIndices(); let aZero=0,aGreen=0,aRed=0,aDone=0;
-  scope.forEach(i=>{ const w=weightOf(i); if(w===0)aZero++; else if(w>0)aGreen++; else aRed++; if(w>=masteryEff())aDone++; });
+  // v93.20: серая плитка «Ещё не начато» = НЕПОКАЗАННЫЕ слова (по seen/isPassed),
+  // а НЕ слова с весом 0. Слово, которое показали, но игрок не отгадал и не
+  // ошибся (вес остался 0), раньше вечно висело в «Ещё не начато», хотя его уже
+  // показывали (isPassed=true) — отсюда «серые слова, которые не исчезают».
+  // Зелёная (>0) и красная (<0) по-прежнему по знаку веса.
+  const _ss = (typeof seenSetOf==='function') ? seenSetOf() : null;
+  scope.forEach(i=>{
+    const w=weightOf(i);
+    const started = _ss ? isPassed(i, _ss) : (w!==0);   // «начато» = показано или вес≠0
+    if(!started) aZero++;                                // ещё не начато (непоказанное)
+    if(w>0) aGreen++; else if(w<0) aRed++;
+    if(w>=masteryEff()) aDone++;
+  });
   $('#actN').textContent=scope.length;
   $('#actScope').textContent = mode==='phrases' ? ((user.phrGeneral!==false)?'все фразы':'выбор по разделам') : mode==='pairs' ? ((user.pairsGeneral!==false)?'все пары':'выбор по разделам') : mode==='verbs' ? (verbSubName()+(verbSelSet()?' · по уровням':'')) : ((user.levelsGeneral!==false) ? 'выбор по тысячам' : 'выбор по уровням');
   $('#actGreen').textContent=plural(aGreen);
@@ -9950,7 +9962,7 @@ if ('serviceWorker' in navigator) {
    только APP_SUBVERSION (1 → 2…), крупные — APP_VERSION (92 → 93, а
    подверсию сбросить в 0 или 1). Сравнение идёт по APP_BUILD. */
 const APP_VERSION    = 93;   // основная версия (93 — разовый подъём: клиенты сборки «92» без подверсий видят только основную)
-const APP_SUBVERSION = 19;   // подверсия (1, 2, …)
+const APP_SUBVERSION = 20;   // подверсия (1, 2, …)
 const APP_BUILD = APP_VERSION*100 + APP_SUBVERSION;               // 9201
 const APP_VERSION_LABEL = APP_VERSION + '.' + APP_SUBVERSION;     // «92.1» — подверсия всегда в шапке
 
