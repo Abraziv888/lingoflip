@@ -6401,6 +6401,80 @@ async function buildDiagReport(opts){
       }
     }catch(e){}
   }
+
+  // --- СЕРЫЕ СЛОВА (диагностика непоказанных в текущем режиме) ---
+  // Прослеживает судьбу КАЖДОГО серого (непоказанного) слова активного набора:
+  // попало ли оно в enabled → в fresh → в выбор игры selectGameEntries →
+  // на доску после дедупа arrangeRounds. Точка, где слово теряется, = причина.
+  try{
+    if(typeof enabledIndices==='function' && typeof isPassed==='function' && typeof seenSetOf==='function'){
+      L.push('');
+      L.push('— СЕРЫЕ СЛОВА (режим: '+(typeof mode!=='undefined'?mode:'?')+') —');
+      const ss = seenSetOf();
+      const enabled = enabledIndices();
+      const enabledSet = new Set(enabled);
+      // все непоказанные (серые) в активном наборе
+      const greyEnabled = enabled.filter(i=> !isPassed(i, ss));
+      // непоказанные во ВСЁМ словаре (для сверки: часть могла остаться в выключенных уровнях)
+      let deckLen = 0; try{ deckLen = (typeof DECK!=='undefined' && DECK.length) ? DECK.length : (typeof COURSE!=='undefined'? COURSE.length:0); }catch(e){}
+      let greyAll = 0; try{ for(let i=0;i<deckLen;i++){ if(!isPassed(i, ss)) greyAll++; } }catch(e){}
+
+      L.push('активный набор: '+enabled.length+' слов; серых (непоказанных) в наборе: '+greyEnabled.length);
+      L.push('серых во всём словаре режима: '+greyAll+' (разница '+(greyAll-greyEnabled.length)+' — это серые в ВЫКЛЮЧЕННЫХ уровнях, в игру не идут)');
+
+      // сколько слов набирает одна игра
+      let gameN = 0;
+      try{ const rr=(typeof roundsSetting!=='undefined'?roundsSetting:5), rw=(typeof rowsSetting!=='undefined'?rowsSetting:5); gameN = rr*rw; L.push('настройки игры: раундов='+rr+' × строк='+rw); }catch(e){}
+      if(!gameN){ try{ gameN = (typeof g!=='undefined' && g && g.pairs) ? g.pairs : 25; }catch(e){ gameN=25; } }
+      L.push('слов набирается в одну игру (пар): ~'+gameN);
+
+      // симуляция отбора: попадут ли серые в выбор игры и на доску
+      if(greyEnabled.length){
+        let picked=[], board=[];
+        try{ picked = (typeof selectGameEntries==='function') ? selectGameEntries(gameN) : []; }catch(e){ L.push('  (selectGameEntries недоступна: '+e+')'); }
+        const pickedSet = new Set(picked);
+        try{ board = (typeof arrangeRounds==='function' && picked.length) ? arrangeRounds(picked, (typeof rowsSetting!=='undefined'?rowsSetting:5)) : picked.slice(); }catch(e){ board=picked.slice(); }
+        const boardSet = new Set(board);
+
+        const inFresh = greyEnabled.filter(i=> pickedSet.has(i)).length;
+        const onBoard = greyEnabled.filter(i=> boardSet.has(i)).length;
+        L.push('из серых попали в ВЫБОР игры: '+inFresh+' из '+greyEnabled.length);
+        L.push('из серых попали на ДОСКУ (после дедупа): '+onBoard+' из '+greyEnabled.length);
+        if(onBoard<greyEnabled.length){
+          L.push('  ⚠ '+(greyEnabled.length-onBoard)+' серых слов НЕ попадают на доску — вот причина, что они не закрываются');
+        }
+
+        // детально по каждому серому слову: где потерялось + его признаки
+        L.push('детально (индекс · EN · RU · вес · в наборе / в выборе / на доске):');
+        const getEnS = i=>{ try{ return (typeof DECK!=='undefined'&&DECK[i])?String(DECK[i][0]).slice(0,18):'?'; }catch(e){ return '?'; } };
+        const getRuS = i=>{ try{ return (typeof transOf==='function')?String(transOf(i)).slice(0,18):'?'; }catch(e){ return '?'; } };
+        const wOf = i=>{ try{ return (typeof weightOf==='function')?weightOf(i):'?'; }catch(e){ return '?'; } };
+        const lvlOf = i=>{ try{ return (typeof levelOf==='function')?levelOf(i):'?'; }catch(e){ return '?'; } };
+        // считаем, со сколькими словами набора конфликтует серое слово (по EN/RU)
+        const conflCount = (i)=>{
+          try{
+            if(typeof conflEnWord!=='function'||typeof normEnWord!=='function') return '?';
+            const e=normEnWord(DECK[i][0]), r=(typeof normRuFirst==='function'?normRuFirst(transOf(i)):'');
+            let n=0; for(const j of enabled){ if(j===i) continue;
+              if(conflEnWord(e, normEnWord(DECK[j][0]))) { n++; continue; }
+              if(typeof conflRuWord==='function' && r && conflRuWord(r, normRuFirst(transOf(j)))) n++;
+            } return n;
+          }catch(e){ return '?'; }
+        };
+        greyEnabled.slice(0, 40).forEach(i=>{
+          L.push('  #'+padr(i,5)+' '+padr(getEnS(i),18)+' '+padr(getRuS(i),18)+' вес='+padr(wOf(i),4)+' ур='+lvlOf(i)
+                 +' | набор='+(enabledSet.has(i)?'да':'НЕТ')
+                 +' выбор='+(pickedSet.has(i)?'да':'НЕТ')
+                 +' доска='+(boardSet.has(i)?'да':'НЕТ')
+                 +' конфликтует_с='+conflCount(i)+' слов');
+        });
+        if(greyEnabled.length>40) L.push('  … и ещё '+(greyEnabled.length-40)+' серых (показаны первые 40)');
+      } else {
+        L.push('серых слов в активном наборе нет — всё пройдено.');
+      }
+    }
+  }catch(e){ L.push('— СЕРЫЕ СЛОВА: ошибка сбора — '+e); }
+
   // --- СХЕМА И СВЯЗЬ ---
   L.push('');
   L.push('— СХЕМА ОБЛАКА И СВЯЗЬ —');
@@ -9876,7 +9950,7 @@ if ('serviceWorker' in navigator) {
    только APP_SUBVERSION (1 → 2…), крупные — APP_VERSION (92 → 93, а
    подверсию сбросить в 0 или 1). Сравнение идёт по APP_BUILD. */
 const APP_VERSION    = 93;   // основная версия (93 — разовый подъём: клиенты сборки «92» без подверсий видят только основную)
-const APP_SUBVERSION = 18;   // подверсия (1, 2, …)
+const APP_SUBVERSION = 19;   // подверсия (1, 2, …)
 const APP_BUILD = APP_VERSION*100 + APP_SUBVERSION;               // 9201
 const APP_VERSION_LABEL = APP_VERSION + '.' + APP_SUBVERSION;     // «92.1» — подверсия всегда в шапке
 
