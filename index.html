@@ -5436,7 +5436,28 @@ function fillWordList(elId, rows){ // rows: [idx, count]
   const list=$('#'+elId); list.innerHTML='';
   rows.forEach(([i,c])=>{
     const r=document.createElement('div'); r.className='wrow';
-    r.innerHTML=`<span class="en">${DECK[i][0]}</span><span class="ru">${transOf(i)}</span><span class="wt">×${c}</span>`;
+    const en=document.createElement('span'); en.className='en'; en.textContent=DECK[i][0];
+    const ru=document.createElement('span'); ru.className='ru'; ru.textContent=transOf(i);
+    // ×N (сколько раз слово встретилось в игре) — компактно перед степпером
+    const cnt=document.createElement('span'); cnt.className='wt'; cnt.textContent='×'+c;
+    // v93.21: степпер веса прямо в итогах игры (как в «Мои слова») — можно
+    // подправить вес слова сразу после партии, не заходя в словарь.
+    const step=document.createElement('div'); step.className='wstep';
+    const minus=document.createElement('button'); minus.textContent='−';
+    const wv=document.createElement('span'); wv.className='wv '+weightClass(weightOf(i)); wv.textContent=(weightOf(i)>0?'+':'')+weightOf(i);
+    const plus=document.createElement('button'); plus.textContent='+';
+    const setW=d=>{
+      const nw=clampW(weightOf(i)+d);
+      const key=wkey(i);
+      if(nw===0) delete prog.weights[key]; else prog.weights[key]=nw;
+      saveUser(user);
+      wv.textContent=(nw>0?'+':'')+nw; wv.className='wv '+weightClass(nw);
+      try{ renderDashboards(); }catch(e){}   // плитки «выучено/начато» пересчитать
+    };
+    minus.onclick=()=>setW(-listMatchAmountOf(i,false));
+    plus.onclick=()=>setW(+listMatchAmountOf(i,true));
+    step.appendChild(minus); step.appendChild(wv); step.appendChild(plus);
+    r.appendChild(en); r.appendChild(ru); r.appendChild(cnt); r.appendChild(step);
     list.appendChild(r);
   });
   return rows.length;
@@ -9962,7 +9983,7 @@ if ('serviceWorker' in navigator) {
    только APP_SUBVERSION (1 → 2…), крупные — APP_VERSION (92 → 93, а
    подверсию сбросить в 0 или 1). Сравнение идёт по APP_BUILD. */
 const APP_VERSION    = 93;   // основная версия (93 — разовый подъём: клиенты сборки «92» без подверсий видят только основную)
-const APP_SUBVERSION = 20;   // подверсия (1, 2, …)
+const APP_SUBVERSION = 21;   // подверсия (1, 2, …)
 const APP_BUILD = APP_VERSION*100 + APP_SUBVERSION;               // 9201
 const APP_VERSION_LABEL = APP_VERSION + '.' + APP_SUBVERSION;     // «92.1» — подверсия всегда в шапке
 
