@@ -1383,17 +1383,11 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
 .audbox.compact .repeatbtn .rep-t{display:none}
 .audbtn:disabled{opacity:.4;cursor:default}
 .audbtn.on{border-color:var(--teal);background:var(--sel);color:var(--teal)}
-/* Кнопка «Описание» — вид как у кнопки набора «Слова»: пилюля с иконкой и подписью;
-   активна → синяя заливка с 3D-тенью. Подпись видна всегда (в т.ч. в компакте). */
-.descbtn{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;gap:7px;
-  padding:11px 16px;border-radius:14px;border:1px solid var(--line);background:var(--card);
-  color:var(--fg);cursor:pointer;font-family:'Nunito';font-weight:800;text-transform:uppercase;
-  letter-spacing:.3px;font-size:calc(13px * var(--fs,1));white-space:nowrap;
-  transition:background .15s,color .15s,border-color .15s,box-shadow .1s,transform .05s}
-.descbtn .aud-ic{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;width:18px;height:18px;flex:none}
-.descbtn.on{background:var(--blue);color:#fff;border-color:var(--blue);box-shadow:0 4px 0 var(--blue-d)}
-.descbtn.on:active{transform:translateY(4px);box-shadow:0 0 0 var(--blue-d)}
-.descbtn:disabled{opacity:.4;cursor:default}
+/* Кнопка «Описание» — сегмент в ряду наборов (Слова/Фразы/Пары), вид как у «Слова»:
+   активна → синяя заливка с 3D-тенью; вне набора «Слова» — недоступна. */
+#descBtn.on{background:var(--blue)!important;color:#fff!important;box-shadow:0 4px 0 var(--blue-d)!important}
+#descBtn.on:active{transform:translateY(4px);box-shadow:0 0 0 var(--blue-d)!important}
+#descBtn:disabled{opacity:.45;cursor:default}
 /* независимая кнопка «ПОВТОР» — в одном ряду с прослушиванием, но самостоятельная */
 .repeatbtn{flex:0 1 auto;display:inline-flex;align-items:center;justify-content:center;gap:6px;
   border-color:var(--teal);color:var(--teal);background:var(--card);letter-spacing:.3px}
@@ -1826,6 +1820,10 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
       </div>
       <div id="masteryWarn" class="hint" style="display:none;text-align:left;margin:-6px 2px 8px;color:var(--coral);font-weight:800"></div>
       <div class="setrow">
+        <div class="setlbl"><div class="lbl">Антиповтор слабых слов</div><div class="desc">слово не появится чаще, чем раз в N игр (1 = без ограничения). Если слов на игру не хватает — ограничение игнорируется, и «отложенные» слова всё равно покажутся</div></div>
+        <div class="rounds-stepper" id="antiRepStep"><button id="antiRepUp"><svg class="chev"><use href="#ic-chevu"/></svg></button><div class="rounds-val" id="antiRepVal">1</div><button id="antiRepDown"><svg class="chev"><use href="#ic-chevd"/></svg></button></div>
+      </div>
+      <div class="setrow">
         <div class="setlbl"><div class="lbl">Порог для «веса» — верх</div><div class="desc">максимум: вес слова не поднимется выше этого значения. По умолчанию +10</div></div>
         <div class="rounds-stepper" id="wcapHiStep"><button id="wcapHiUp"><svg class="chev"><use href="#ic-chevu"/></svg></button><div class="rounds-val" id="wcapHiVal">+10</div><button id="wcapHiDown"><svg class="chev"><use href="#ic-chevd"/></svg></button></div>
       </div>
@@ -2067,6 +2065,7 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
       <button id="modeWords" class="on"><svg class="ic"><use href="#ic-m-words"/></svg><span class="mlbl">Слова</span></button>
       <button id="modePhr"><svg class="ic"><use href="#ic-m-phrase"/></svg><span class="mlbl">Фразы</span></button>
       <button id="modePairs"><svg class="ic"><use href="#ic-m-pair"/></svg><span class="mlbl">Пары</span></button>
+      <button id="descBtn" title="Режим «Описание»: слева слово, справа его английское определение (только «Слова»)"><svg class="ic"><use href="#ic-scroll"/></svg><span class="mlbl">Описание</span></button>
       </div>
       <button class="soundtoggle gear" id="settingsBtn" title="Настройки"><svg class="ic"><use href="#ic-cog"/></svg></button>
     </div>
@@ -2091,7 +2090,6 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
       </button>
       <button class="audbtn" id="audRu" disabled><svg class="lic aud-ic" aria-hidden="true"><use href="#ic-headphones"/></svg><span class="aud-full">ПРОСЛУШИВАНИЕ</span><span class="aud-sfx">RU</span></button>
       <button class="audbtn" id="audEn" disabled><svg class="lic aud-ic" aria-hidden="true"><use href="#ic-headphones"/></svg><span class="aud-full">ПРОСЛУШИВАНИЕ</span><span class="aud-sfx">EN</span></button>
-      <button class="descbtn" id="descBtn" title="Режим «Описание»: слева слово, справа его английское определение (только «Слова»)"><svg class="lic aud-ic" aria-hidden="true"><use href="#ic-note"/></svg><span class="mlbl">ОПИСАНИЕ</span></button>
       <button class="audbtn repeatbtn" id="listenRu" title="Повтор: RU + звук">
         <svg class="lic" aria-hidden="true"><use href="#ic-loop"/></svg><span class="rep-t">ПОВТОР</span>
       </button>
@@ -2905,6 +2903,23 @@ let dedupRounds = (localStorage.getItem('wm2_dedup') ?? '1') !== '0';     // н�
 let reviewWeak  = localStorage.getItem('wm2_review_weak') === '1';        // подмешивать ~30% слабых слов на повтор в каждой игре (по умолчанию выкл)
 let firstPassOnly = (localStorage.getItem('wm2_firstpass') ?? '1') !== '0'; // показанное не повторять, пока не пройден весь набор (по умолчанию вкл)
 let masterySetting = Math.min(MAX_MASTERY, Math.max(MIN_MASTERY, parseInt(localStorage.getItem('wm2_mastery')||'10',10)||10));
+// ---- Антиповтор слабых слов: слово не появляется чаще, чем раз в N игр ----
+// N=1 → без ограничения. Слова, показанные за последние N-1 игр, отодвигаются в
+// конец «повторного» списка и берутся только если готовых не хватает на игру
+// (авто-игнор при нехватке). Отметка последней игры — prog.lastPlay[wkey]=prog.games.
+const MIN_ANTIREP=1, MAX_ANTIREP=100;
+let antiRepSetting = Math.min(MAX_ANTIREP, Math.max(MIN_ANTIREP, parseInt(localStorage.getItem('wm2_antirep')||'1',10)||1));
+function renderAntiRep(){
+  const v=$('#antiRepVal'); if(v) v.textContent=antiRepSetting;
+  const up=$('#antiRepUp'), dn=$('#antiRepDown');
+  if(up) up.disabled = antiRepSetting>=MAX_ANTIREP;
+  if(dn) dn.disabled = antiRepSetting<=MIN_ANTIREP;
+}
+function setAntiRep(n){
+  antiRepSetting=Math.min(MAX_ANTIREP,Math.max(MIN_ANTIREP,Math.round(n)));
+  try{ localStorage.setItem('wm2_antirep', String(antiRepSetting)); }catch(e){}
+  renderAntiRep();
+}
 // ---- предел веса слова: отдельно верхний (+) и нижний (−) пороги ----
 const MIN_WCAP=5, MAX_WCAP=100, WCAP_STEP=5;
 let weightCapHi = Math.min(MAX_WCAP, Math.max(MIN_WCAP, parseInt(localStorage.getItem('wm2_weightcap_hi')||'10',10)||10));
@@ -3083,8 +3098,6 @@ function renderDescUI(){
   const usable = (mode==='words');
   b.disabled = !usable;
   b.classList.toggle('on', descOn && usable);
-  const h=$('#audHint');
-  if(h && descActive()) h.textContent='Режим «Описание»: подбирай английское слово к его английскому определению (только набор «Слова»).';
 }
 function descSet(on){
   descOn=!!on;
@@ -3213,7 +3226,7 @@ let prog = null;            // прогресс активной деки
 const WEEK_TZ_OFFSET_MIN = 0;
 function dayKey(d){ const t=(d?d.getTime():Date.now())+WEEK_TZ_OFFSET_MIN*60000; return new Date(t).toISOString().slice(0,10); }
 function todayKey(){ return dayKey(); }
-function emptyProg(){ return {weights:{},seen:[],stats:{},daily:{},dailyTime:{},dailyGames:{},dailyGreen:{},dailyRed:{},dailyLearned:{},last:null,games:0,rounds:0,totalTime:0,agames:0,arounds:0}; }
+function emptyProg(){ return {weights:{},seen:[],stats:{},daily:{},dailyTime:{},dailyGames:{},dailyGreen:{},dailyRed:{},dailyLearned:{},lastPlay:{},last:null,games:0,rounds:0,totalTime:0,agames:0,arounds:0}; }
 // Начало текущей недели (понедельник) как ключ 'YYYY-MM-DD' в выбранном поясе —
 // согласовано с ключами dailyTime/daily/dailyGames (тот же dayKey).
 function weekStartKey(){
@@ -4082,10 +4095,19 @@ function selectGameEntries(N){
     : enabled.filter(i=> weightOf(i)===0);
   // повтор: остальные (показанные ИЛИ размеченные), от меньшего веса к большему
   // (сначала самые слабые)
-  const rest = (firstPassOnly
+  let rest = (firstPassOnly
     ? enabled.filter(i=> isPassed(i,seenSet))
     : enabled.filter(i=> weightOf(i)!==0)
   ).sort((a,b)=>weightOf(a)-weightOf(b));
+  // Антиповтор: слова, показанные за последние (antiRepSetting-1) игр, отодвигаем в
+  // конец «повторного» списка — они берутся только если готовых не хватает на игру
+  // (авто-игнор при нехватке). Порядок «слабейшие вперёд» внутри групп сохраняется.
+  if(antiRepSetting>1 && rest.length){
+    const gnum=(prog&&prog.games)||0, lp=(prog&&prog.lastPlay)||{};
+    const ready=[], cool=[];
+    rest.forEach(i=>{ const last=lp[wkey(i)]; if(last!==undefined && (gnum-last)<antiRepSetting) cool.push(i); else ready.push(i); });
+    rest = ready.concat(cool);
+  }
   // новых не хватило — добираем остаток повтором (слабые вперёд)
   if(fresh.length < N) return fresh.concat(rest.slice(0, N-fresh.length));
   // новых хватает. Если включён «Повтор слабых слов» — резервируем ~30% мест под слабые.
@@ -5178,6 +5200,11 @@ function commitRound(){
   // но и все подмешанные — берём полный набор показанных idx (g.roundIdxs)
   const roundList = (g.mixOn && g.roundIdxs) ? [...g.roundIdxs] : g.cur;
   const seen=new Set(prog.seen); roundList.forEach(i=>seen.add(wkey(i))); prog.seen=[...seen];
+  // Антиповтор: помечаем показанные слова номером текущей игры (prog.games ещё не
+  // увеличен — растёт в finishGame). По этой отметке selectGameEntries отодвигает
+  // недавно показанные слова в резерв на следующие antiRepSetting-1 игр.
+  if(!prog.lastPlay) prog.lastPlay={};
+  { const gnum=prog.games||0; roundList.forEach(i=>{ prog.lastPlay[wkey(i)]=gnum; }); }
   const today=dayKey();
   prog.daily[today]=(prog.daily[today]||0)+roundList.length;
   saveUser(user);
@@ -6868,6 +6895,7 @@ if($('#mixDimBtn')) $('#mixDimBtn').onclick=toggleMixDim;
 if($('#mixReworkBtn')) $('#mixReworkBtn').onclick=toggleMixRework;
 $('#masteryUp').onclick=()=>setMastery(masterySetting+1);
 $('#masteryDown').onclick=()=>setMastery(masterySetting-1);
+{ const au=$('#antiRepUp'), ad=$('#antiRepDown'); if(au) au.onclick=()=>setAntiRep(antiRepSetting+1); if(ad) ad.onclick=()=>setAntiRep(antiRepSetting-1); renderAntiRep(); }
 if($('#wcapHiUp')) $('#wcapHiUp').onclick=()=>setWeightCapHi(weightCapHi+WCAP_STEP);
 if($('#wcapHiDown')) $('#wcapHiDown').onclick=()=>setWeightCapHi(weightCapHi-WCAP_STEP);
 if($('#wcapLoUp')) $('#wcapLoUp').onclick=()=>setWeightCapLo(weightCapLo-WCAP_STEP);   // −10 → −5 (ближе к нулю)
@@ -10033,7 +10061,7 @@ if ('serviceWorker' in navigator) {
    только APP_SUBVERSION (1 → 2…), крупные — APP_VERSION (92 → 93, а
    подверсию сбросить в 0 или 1). Сравнение идёт по APP_BUILD. */
 const APP_VERSION    = 93;   // основная версия (93 — разовый подъём: клиенты сборки «92» без подверсий видят только основную)
-const APP_SUBVERSION = 23;   // подверсия — 23: «Описание» — кнопка как «Слова», слева слово / справа определение
+const APP_SUBVERSION = 25;   // подверсия — 25: настройка «Антиповтор слабых слов» (степпер 1–100, кулдаун показа по играм)
 const APP_BUILD = APP_VERSION*100 + APP_SUBVERSION;               // 9201
 const APP_VERSION_LABEL = APP_VERSION + '.' + APP_SUBVERSION;     // «92.1» — подверсия всегда в шапке
 
