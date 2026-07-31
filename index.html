@@ -3095,9 +3095,8 @@ function descActive(){ return descOn && mode==='words'; }
 function rTxt(i){ return descActive() ? (descOf(i)||transOf(i)) : transOf(i); }
 function renderDescUI(){
   const b=$('#descBtn'); if(!b) return;
-  const usable = (mode==='words');
-  b.disabled = !usable;
-  b.classList.toggle('on', descOn && usable);
+  b.disabled = false;                                  // независима от «Слова»: клик сам включит набор
+  b.classList.toggle('on', descOn && mode==='words');
 }
 function descSet(on){
   descOn=!!on;
@@ -3108,8 +3107,13 @@ function descSet(on){
   }
   renderDescUI();
   if(!descOn && typeof renderAudUI==='function') renderAudUI();          // вернуть обычную подсказку
+  if(typeof refreshHome==='function' && typeof user!=='undefined' && user) refreshHome(); // обновить подсветку «Слова»/«Описание»
 }
-function toggleDesc(){ if(mode!=='words') return; descSet(!descOn); }
+function toggleDesc(){
+  if(descOn && mode==='words'){ descSet(false); return; }      // активен → выключаем (остаёмся в «Словах»)
+  if(mode!=='words' && typeof setMode==='function') setMode('words'); // включаем — при необходимости переходим в «Слова»
+  descSet(true);
+}
 
 function audSet(m){
   if((m==='ru'||m==='en') && descOn){ descOn=false; try{localStorage.setItem('wm2_desc_on','0');}catch(e){} if(typeof renderDescUI==='function') renderDescUI(); }
@@ -3282,6 +3286,8 @@ function applyMode(){
 function setMode(m){
   mode = (m==='phrases'||m==='pairs'||m==='verbs') ? m : 'words';
   localStorage.setItem('wm2_mode', mode);
+  // «Описание» существует только для набора «Слова»: при уходе из него — выключаем
+  if(mode!=='words' && typeof descOn!=='undefined' && descOn){ descOn=false; try{localStorage.setItem('wm2_desc_on','0');}catch(e){} }
   if(typeof gramDisengage==='function') gramDisengage(); // выход из режима грамматики
   applyMode();
   if(user) refreshHome();
@@ -5380,7 +5386,7 @@ function refreshHome(){
   if(typeof refreshMyCup==='function') refreshMyCup();
   const gramOn = (typeof gramSel!=='undefined' && gramSel!==null);
   if(typeof renderDescUI==='function') renderDescUI();   // режим «Описание» доступен только в «Словах»
-  $('#modeWords').classList.toggle('on', !gramOn && mode==='words');
+  $('#modeWords').classList.toggle('on', !gramOn && mode==='words' && !descOn);
   $('#modePhr').classList.toggle('on', !gramOn && mode==='phrases');
   $('#modePairs').classList.toggle('on', !gramOn && mode==='pairs');
   if($('#modeVerbs')) $('#modeVerbs').classList.toggle('on', !gramOn && mode==='verbs');
@@ -6971,7 +6977,7 @@ $('#nameBack').onclick=goBack;
 
 // статистика
 $('#statsBtn').onclick=()=>{ renderStats('last'); navPush('stats'); };
-$('#modeWords').onclick=()=>setMode('words');
+$('#modeWords').onclick=()=>{ setMode('words'); if(typeof descSet==='function') descSet(false); };
 $('#modePhr').onclick=()=>setMode('phrases');
 $('#modePairs').onclick=()=>setMode('pairs');
 if($('#modeVerbs')) $('#modeVerbs').onclick=()=>setMode('verbs');
@@ -10061,7 +10067,7 @@ if ('serviceWorker' in navigator) {
    только APP_SUBVERSION (1 → 2…), крупные — APP_VERSION (92 → 93, а
    подверсию сбросить в 0 или 1). Сравнение идёт по APP_BUILD. */
 const APP_VERSION    = 93;   // основная версия (93 — разовый подъём: клиенты сборки «92» без подверсий видят только основную)
-const APP_SUBVERSION = 25;   // подверсия — 25: настройка «Антиповтор слабых слов» (степпер 1–100, кулдаун показа по играм)
+const APP_SUBVERSION = 26;   // подверсия — 26: кнопка «Описание» независима от «Слова» (сама переключает набор; ровно одна из 4 кнопок активна)
 const APP_BUILD = APP_VERSION*100 + APP_SUBVERSION;               // 9201
 const APP_VERSION_LABEL = APP_VERSION + '.' + APP_SUBVERSION;     // «92.1» — подверсия всегда в шапке
 
