@@ -1383,6 +1383,8 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
 .audbox.compact .repeatbtn .rep-t{display:none}
 .audbtn:disabled{opacity:.4;cursor:default}
 .audbtn.on{border-color:var(--teal);background:var(--sel);color:var(--teal)}
+/* режим «Описание» — синий акцент, отличается от бирюзового прослушивания */
+.descbtn.on{border-color:var(--blue);background:var(--sel);color:var(--blue)}
 /* независимая кнопка «ПОВТОР» — в одном ряду с прослушиванием, но самостоятельная */
 .repeatbtn{flex:0 1 auto;display:inline-flex;align-items:center;justify-content:center;gap:6px;
   border-color:var(--teal);color:var(--teal);background:var(--card);letter-spacing:.3px}
@@ -2080,6 +2082,7 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
       </button>
       <button class="audbtn" id="audRu" disabled><svg class="lic aud-ic" aria-hidden="true"><use href="#ic-headphones"/></svg><span class="aud-full">ПРОСЛУШИВАНИЕ</span><span class="aud-sfx">RU</span></button>
       <button class="audbtn" id="audEn" disabled><svg class="lic aud-ic" aria-hidden="true"><use href="#ic-headphones"/></svg><span class="aud-full">ПРОСЛУШИВАНИЕ</span><span class="aud-sfx">EN</span></button>
+      <button class="audbtn descbtn" id="descBtn" title="Режим «Описание»: подбирай слово к английскому определению (только «Слова»)"><svg class="lic aud-ic" aria-hidden="true"><use href="#ic-note"/></svg><span class="aud-full">ОПИСАНИЕ</span><span class="aud-sfx">EN</span></button>
       <button class="audbtn repeatbtn" id="listenRu" title="Повтор: RU + звук">
         <svg class="lic" aria-hidden="true"><use href="#ic-loop"/></svg><span class="rep-t">ПОВТОР</span>
       </button>
@@ -3057,7 +3060,37 @@ function userKey(n){ return 'wm2_user_'+n; }
 // 'en' — озвучка вместо перевода (видишь англ.). Работает во всех наборах.
 let audMode = (function(){ const v=localStorage.getItem('wm2_aud'); return (v==='ru'||v==='en')?v:'off'; })();
 let audLast = (audMode==='en') ? 'en' : 'ru';
+
+// ===== Режим «ОПИСАНИЕ»: правая плитка = английское определение слова (COURSE[i][11]) =====
+// Только набор «Слова» (у фраз/пар/глаголов поля [11] нет). Взаимоисключимо с
+// прослушиванием и подмешиванием. Турнирный зачёт — как у обычных слов (не трогаем).
+let descOn = localStorage.getItem('wm2_desc_on')==='1';
+function descOf(i){ const r=COURSE[i]; const d=r&&r[11]; return (typeof d==='string' && d.trim()) ? d : ''; }
+function descActive(){ return descOn && mode==='words'; }
+// Текст правой стороны плитки: в режиме «Описание» — определение, иначе перевод.
+function rTxt(i){ return descActive() ? (descOf(i)||transOf(i)) : transOf(i); }
+function renderDescUI(){
+  const b=$('#descBtn'); if(!b) return;
+  const usable = (mode==='words');
+  b.disabled = !usable;
+  b.classList.toggle('on', descOn && usable);
+  const h=$('#audHint');
+  if(h && descActive()) h.textContent='Режим «Описание»: подбирай английское слово к его английскому определению (только набор «Слова»).';
+}
+function descSet(on){
+  descOn=!!on;
+  try{ localStorage.setItem('wm2_desc_on', descOn?'1':'0'); }catch(e){}
+  if(descOn){
+    if(audMode!=='off') audSet('off');                                   // выкл прослушивание
+    if(typeof mixOn!=='undefined' && mixOn){ mixOn=false; try{localStorage.setItem('wm2_mix_on','0');}catch(e){} if(typeof renderMix==='function') renderMix(); if(typeof renderTournament==='function') renderTournament(); }
+  }
+  renderDescUI();
+  if(!descOn && typeof renderAudUI==='function') renderAudUI();          // вернуть обычную подсказку
+}
+function toggleDesc(){ if(mode!=='words') return; descSet(!descOn); }
+
 function audSet(m){
+  if((m==='ru'||m==='en') && descOn){ descOn=false; try{localStorage.setItem('wm2_desc_on','0');}catch(e){} if(typeof renderDescUI==='function') renderDescUI(); }
   if(m==='ru'||m==='en') audLast=m;
   audMode=m;
   try{ localStorage.setItem('wm2_aud', m); }catch(e){}
@@ -3536,6 +3569,8 @@ function toggleMix(){
   mixOn=!mixOn;
   localStorage.setItem('wm2_mix_on', mixOn?'1':'0');
   if(mixOn){
+    // взаимоисключимо с «Описанием»
+    if(typeof descOn!=='undefined' && descOn){ descOn=false; try{localStorage.setItem('wm2_desc_on','0');}catch(e){} if(typeof renderDescUI==='function') renderDescUI(); }
     // взаимоисключимо с «Тушить»: выключаем его со всеми подрежимами и «работой над ошибками»
     if(dimWrongOn){ dimWrongOn=false; localStorage.setItem('wm2_dimwrong_on','0'); }
     if(reworkOn){ reworkOn=false; localStorage.setItem('wm2_rework','0'); }
@@ -3969,6 +4004,8 @@ function enabledIndices(){
     if(masteryOn && weightOf(i)>=masteryEff()) continue;
     arr.push(i);
   }
+  // Режим «Описание»: убираем слова без определения (сейчас есть у всех — страховка)
+  if(descActive()) return arr.filter(i=>descOf(i));
   return arr;
 }
 function scopeIndices(){
@@ -4424,16 +4461,16 @@ function dedupeRoundWindow(start, rows){
   const en=new Set(), ru=new Set();
   for(let p=start;p<end;p++){
     let i=g.entries[p];
-    if(en.has(enOf(i)) || ru.has(transOf(i))){
+    if(en.has(enOf(i)) || ru.has(rTxt(i))){
       let q=end;
       while(q<g.entries.length){
         const c=g.entries[q];
-        if(!en.has(enOf(c)) && !ru.has(transOf(c))) break;
+        if(!en.has(enOf(c)) && !ru.has(rTxt(c))) break;
         q++;
       }
       if(q<g.entries.length){ const t=g.entries[p]; g.entries[p]=g.entries[q]; g.entries[q]=t; i=g.entries[p]; }
     }
-    en.add(enOf(i)); ru.add(transOf(i));
+    en.add(enOf(i)); ru.add(rTxt(i));
   }
 }
 function loadRound(){
@@ -4453,7 +4490,7 @@ function loadRound(){
   board.classList.remove('mixing');
   board.classList.toggle('show-ipa', ipaOn);
   const en=slice.map(idx=>({idx,side:'L',txt:enOf(idx)}));
-  const ru=slice.map(idx=>({idx,side:'R',txt:transOf(idx)}));
+  const ru=slice.map(idx=>({idx,side:'R',txt:rTxt(idx)}));
   if(g.col==='split'){
     // левая колонка — русские, правая — английские; каждая колонка перемешана отдельно
     board.classList.add('split');
@@ -4482,7 +4519,7 @@ function loadPhraseRound(){
   setRoundLabel(r.kind==='ctx' ? 'Закрепление' : '');
   const board=$('#board'); board.innerHTML=''; board.classList.remove('show-ipa','mixing');
   const en=items.map(idx=>({idx,side:'L',txt:enOf(idx)}));
-  const ru=items.map(idx=>({idx,side:'R',txt:transOf(idx)}));
+  const ru=items.map(idx=>({idx,side:'R',txt:rTxt(idx)}));
   if(g.col==='split'){
     board.classList.add('split');
     board.style.gridTemplateRows='repeat('+items.length+',auto)';
@@ -4529,7 +4566,7 @@ function loadRoundMix(){
   const board=$('#board'); board.innerHTML='';
   board.classList.toggle('show-ipa', ipaOn);
   const en=slice.map(idx=>({idx,side:'L',txt:enOf(idx)}));
-  const ru=slice.map(idx=>({idx,side:'R',txt:transOf(idx)}));
+  const ru=slice.map(idx=>({idx,side:'R',txt:rTxt(idx)}));
   // ВСЕГДА split: левая колонка — русские (side R), правая — английские (side L);
   // рандом столбцов в этом режиме отключён. Класс mixing резервирует высоту плиток
   // под две строки, чтобы ряды не скакали при смене слов
@@ -4630,7 +4667,7 @@ function fillSlot(tile, idx){
     tile.querySelector('.w').textContent=enOf(idx);
     if(ipa) tile.querySelector('.ipa').textContent=ipa;
   } else {
-    tile.textContent=transOf(idx);
+    tile.textContent=rTxt(idx);
     const sb=senseBadgeFor(idx); if(sb) tile.appendChild(sb);   // v62: номер значения
   }
   tile.classList.remove('fade'); void tile.offsetWidth; tile.classList.add('fade');  // мягкое появление
@@ -4877,7 +4914,7 @@ function enterMixRework(){
   board.classList.add('split');                  // слева Ру, справа En — как во всём режиме
   board.style.gridTemplateRows='repeat('+idxs.length+',auto)';
   const en=idxs.map(idx=>({idx,side:'L',txt:enOf(idx)}));
-  const ru=idxs.map(idx=>({idx,side:'R',txt:transOf(idx)}));
+  const ru=idxs.map(idx=>({idx,side:'R',txt:rTxt(idx)}));
   [...shuffle(ru), ...shuffle(en)].forEach(t=>{ const b=makeTile(t); b.classList.add('rework'); board.appendChild(b); });
   showReworkBanner(true);
   updateProgress();
@@ -4962,7 +4999,7 @@ function tap(b){
   const ai=+a.dataset.idx, bi=+b.dataset.idx;
   const L = a.dataset.side==='L' ? ai : bi;   // запись со стороны английского
   const R = a.dataset.side==='L' ? bi : ai;   // запись со стороны русского
-  const correct = (L===R) || (mode!=='phrases' && transOf(L)===transOf(R)); // верно и если перевод совпадает по тексту (кроме фраз)
+  const correct = (L===R) || (mode!=='phrases' && rTxt(L)===rTxt(R)); // верно, если совпал текст правой стороны (перевод или, в режиме «Описание», определение); кроме фраз
   if(correct){
     // верно: слову +вес по режиму; плитки остаются блёклыми (можно жать жесты)
     a.classList.add('right'); b.classList.add('right');
@@ -5305,6 +5342,7 @@ function refreshHome(){
   if(typeof renderMyCup==='function') renderMyCup();
   if(typeof refreshMyCup==='function') refreshMyCup();
   const gramOn = (typeof gramSel!=='undefined' && gramSel!==null);
+  if(typeof renderDescUI==='function') renderDescUI();   // режим «Описание» доступен только в «Словах»
   $('#modeWords').classList.toggle('on', !gramOn && mode==='words');
   $('#modePhr').classList.toggle('on', !gramOn && mode==='phrases');
   $('#modePairs').classList.toggle('on', !gramOn && mode==='pairs');
@@ -6075,7 +6113,9 @@ $('#winnersRefresh').onclick=()=>renderWinners();
 $('#audToggle').onclick=()=>audSet(audMode==='off'?audLast:'off');
 $('#audRu').onclick=()=>audSet('ru');
 $('#audEn').onclick=()=>audSet('en');
+const _descBtn=$('#descBtn'); if(_descBtn) _descBtn.onclick=()=>toggleDesc();
 renderAudUI();
+renderDescUI();
 
 $('#startBtn').onclick=()=>{
   // в режиме грамматики «Поехали» запускает тест (или открывает «Времена»)
@@ -9983,7 +10023,7 @@ if ('serviceWorker' in navigator) {
    только APP_SUBVERSION (1 → 2…), крупные — APP_VERSION (92 → 93, а
    подверсию сбросить в 0 или 1). Сравнение идёт по APP_BUILD. */
 const APP_VERSION    = 93;   // основная версия (93 — разовый подъём: клиенты сборки «92» без подверсий видят только основную)
-const APP_SUBVERSION = 21;   // подверсия (1, 2, …)
+const APP_SUBVERSION = 22;   // подверсия (1, 2, …) — 22: режим «Описание» (правая плитка = англ. определение [11])
 const APP_BUILD = APP_VERSION*100 + APP_SUBVERSION;               // 9201
 const APP_VERSION_LABEL = APP_VERSION + '.' + APP_SUBVERSION;     // «92.1» — подверсия всегда в шапке
 
