@@ -1383,8 +1383,17 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
 .audbox.compact .repeatbtn .rep-t{display:none}
 .audbtn:disabled{opacity:.4;cursor:default}
 .audbtn.on{border-color:var(--teal);background:var(--sel);color:var(--teal)}
-/* режим «Описание» — синий акцент, отличается от бирюзового прослушивания */
-.descbtn.on{border-color:var(--blue);background:var(--sel);color:var(--blue)}
+/* Кнопка «Описание» — вид как у кнопки набора «Слова»: пилюля с иконкой и подписью;
+   активна → синяя заливка с 3D-тенью. Подпись видна всегда (в т.ч. в компакте). */
+.descbtn{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;gap:7px;
+  padding:11px 16px;border-radius:14px;border:1px solid var(--line);background:var(--card);
+  color:var(--fg);cursor:pointer;font-family:'Nunito';font-weight:800;text-transform:uppercase;
+  letter-spacing:.3px;font-size:calc(13px * var(--fs,1));white-space:nowrap;
+  transition:background .15s,color .15s,border-color .15s,box-shadow .1s,transform .05s}
+.descbtn .aud-ic{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;width:18px;height:18px;flex:none}
+.descbtn.on{background:var(--blue);color:#fff;border-color:var(--blue);box-shadow:0 4px 0 var(--blue-d)}
+.descbtn.on:active{transform:translateY(4px);box-shadow:0 0 0 var(--blue-d)}
+.descbtn:disabled{opacity:.4;cursor:default}
 /* независимая кнопка «ПОВТОР» — в одном ряду с прослушиванием, но самостоятельная */
 .repeatbtn{flex:0 1 auto;display:inline-flex;align-items:center;justify-content:center;gap:6px;
   border-color:var(--teal);color:var(--teal);background:var(--card);letter-spacing:.3px}
@@ -2082,7 +2091,7 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
       </button>
       <button class="audbtn" id="audRu" disabled><svg class="lic aud-ic" aria-hidden="true"><use href="#ic-headphones"/></svg><span class="aud-full">ПРОСЛУШИВАНИЕ</span><span class="aud-sfx">RU</span></button>
       <button class="audbtn" id="audEn" disabled><svg class="lic aud-ic" aria-hidden="true"><use href="#ic-headphones"/></svg><span class="aud-full">ПРОСЛУШИВАНИЕ</span><span class="aud-sfx">EN</span></button>
-      <button class="audbtn descbtn" id="descBtn" title="Режим «Описание»: подбирай слово к английскому определению (только «Слова»)"><svg class="lic aud-ic" aria-hidden="true"><use href="#ic-note"/></svg><span class="aud-full">ОПИСАНИЕ</span><span class="aud-sfx">EN</span></button>
+      <button class="descbtn" id="descBtn" title="Режим «Описание»: слева слово, справа его английское определение (только «Слова»)"><svg class="lic aud-ic" aria-hidden="true"><use href="#ic-note"/></svg><span class="mlbl">ОПИСАНИЕ</span></button>
       <button class="audbtn repeatbtn" id="listenRu" title="Повтор: RU + звук">
         <svg class="lic" aria-hidden="true"><use href="#ic-loop"/></svg><span class="rep-t">ПОВТОР</span>
       </button>
@@ -4399,7 +4408,7 @@ function startGame(replace){
     mixPer = Math.min(mixCount, Math.max(0, enabledIndices().length - rows));
     gpairs = rounds*(rows + mixPer);
   }
-  g={ entries, rounds, rows, pairs:gpairs, col: useMix?'split':colMode, round:0, matched:0, totalMatched:0, totalResolved:0, mistakes:0,
+  g={ entries, rounds, rows, pairs:gpairs, col: (useMix||descActive())?'split':colMode, round:0, matched:0, totalMatched:0, totalResolved:0, mistakes:0,
       delta:{}, correct:{}, wrong:{}, gCorrect:{}, gWrong:{}, dimWrong: useMix?false:dimWrongOn, dimWrongMode:dimWrongMode, rework: useMix?false:reworkOn,
       mixOn:useMix, mixPer, mixLeft:0, mixPending:0, mixBurst:false, mixHits:[], mixWaitT0:0, mixDim:useMix&&mixDimOn, mixRework:useMix&&mixReworkOn, mixActive:null, roundIdxs:null, pool:null, mixTimer:null,
       sel:null, busy:false, t0:performance.now(), timerId:null };
@@ -4495,7 +4504,8 @@ function loadRound(){
     // левая колонка — русские, правая — английские; каждая колонка перемешана отдельно
     board.classList.add('split');
     board.style.gridTemplateRows='repeat('+slice.length+',auto)';
-    const ordered=[...shuffle(ru), ...shuffle(en)]; // column-flow: первые N → левая (Ру), вторые N → правая (En)
+    // «Описание»: слева слово (En), справа определение; иначе слева перевод (Ру), справа слово
+    const ordered = descActive() ? [...shuffle(en), ...shuffle(ru)] : [...shuffle(ru), ...shuffle(en)];
     ordered.forEach(t=>board.appendChild(makeTile(t)));
   } else {
     // вперемешку: все плитки случайно в обеих колонках
@@ -4915,7 +4925,7 @@ function enterMixRework(){
   board.style.gridTemplateRows='repeat('+idxs.length+',auto)';
   const en=idxs.map(idx=>({idx,side:'L',txt:enOf(idx)}));
   const ru=idxs.map(idx=>({idx,side:'R',txt:rTxt(idx)}));
-  [...shuffle(ru), ...shuffle(en)].forEach(t=>{ const b=makeTile(t); b.classList.add('rework'); board.appendChild(b); });
+  (descActive() ? [...shuffle(en), ...shuffle(ru)] : [...shuffle(ru), ...shuffle(en)]).forEach(t=>{ const b=makeTile(t); b.classList.add('rework'); board.appendChild(b); });
   showReworkBanner(true);
   updateProgress();
 }
@@ -10023,7 +10033,7 @@ if ('serviceWorker' in navigator) {
    только APP_SUBVERSION (1 → 2…), крупные — APP_VERSION (92 → 93, а
    подверсию сбросить в 0 или 1). Сравнение идёт по APP_BUILD. */
 const APP_VERSION    = 93;   // основная версия (93 — разовый подъём: клиенты сборки «92» без подверсий видят только основную)
-const APP_SUBVERSION = 22;   // подверсия (1, 2, …) — 22: режим «Описание» (правая плитка = англ. определение [11])
+const APP_SUBVERSION = 23;   // подверсия — 23: «Описание» — кнопка как «Слова», слева слово / справа определение
 const APP_BUILD = APP_VERSION*100 + APP_SUBVERSION;               // 9201
 const APP_VERSION_LABEL = APP_VERSION + '.' + APP_SUBVERSION;     // «92.1» — подверсия всегда в шапке
 
