@@ -1388,6 +1388,15 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
 #descBtn.on{background:var(--blue)!important;color:#fff!important;box-shadow:0 4px 0 var(--blue-d)!important}
 #descBtn.on:active{transform:translateY(4px);box-shadow:0 0 0 var(--blue-d)!important}
 #descBtn:disabled{opacity:.45;cursor:default}
+/* короткие подписи кнопок наборов (СЛОВ/ФРАЗ/ПАРЫ/ОПИС) — по умолчанию скрыты */
+.modeswitch button .mlbl-short{display:none}
+/* когда места мало (узкие экраны) — в РЯДУ НАБОРОВ полные подписи прячем, показываем короткие;
+   ряд глаголов (.verbrow) не трогаем. Порог с запасом, чтобы «ОПИСАНИЕ»×4 не вылезало. */
+@media (max-width:480px){
+  #home .modebar .modeswitch button .mlbl{display:none!important}
+  #home .modebar .modeswitch button .mlbl-short{display:inline!important}
+  #home .modebar .modeswitch button{padding-left:8px!important;padding-right:8px!important;gap:5px!important;min-width:0!important;overflow:hidden}
+}
 /* независимая кнопка «ПОВТОР» — в одном ряду с прослушиванием, но самостоятельная */
 .repeatbtn{flex:0 1 auto;display:inline-flex;align-items:center;justify-content:center;gap:6px;
   border-color:var(--teal);color:var(--teal);background:var(--card);letter-spacing:.3px}
@@ -2062,10 +2071,10 @@ html:not(.bg-ready) .modesticky::before{ display:none; }
     <div class="modesticky">
     <div class="modebar">
       <div class="modeswitch">
-      <button id="modeWords" class="on"><svg class="ic"><use href="#ic-m-words"/></svg><span class="mlbl">Слова</span></button>
-      <button id="modePhr"><svg class="ic"><use href="#ic-m-phrase"/></svg><span class="mlbl">Фразы</span></button>
-      <button id="modePairs"><svg class="ic"><use href="#ic-m-pair"/></svg><span class="mlbl">Пары</span></button>
-      <button id="descBtn" title="Режим «Описание»: слева слово, справа его английское определение (только «Слова»)"><svg class="ic"><use href="#ic-scroll"/></svg><span class="mlbl">Описание</span></button>
+      <button id="modeWords" class="on"><svg class="ic"><use href="#ic-m-words"/></svg><span class="mlbl">Слова</span><span class="mlbl-short">Слов</span></button>
+      <button id="modePhr"><svg class="ic"><use href="#ic-m-phrase"/></svg><span class="mlbl">Фразы</span><span class="mlbl-short">Фраз</span></button>
+      <button id="modePairs"><svg class="ic"><use href="#ic-m-pair"/></svg><span class="mlbl">Пары</span><span class="mlbl-short">Пары</span></button>
+      <button id="descBtn" title="Режим «Описание»: слева слово, справа его английское определение (только «Слова»)"><svg class="ic"><use href="#ic-scroll"/></svg><span class="mlbl">Описание</span><span class="mlbl-short">Опис</span></button>
       </div>
       <button class="soundtoggle gear" id="settingsBtn" title="Настройки"><svg class="ic"><use href="#ic-cog"/></svg></button>
     </div>
@@ -5026,9 +5035,10 @@ function showFb(b, amt){
 }
 function tap(b){
   if(b.classList.contains('right')||b.classList.contains('done')||b.classList.contains('slot-empty')) return;
-  // озвучка английского слова при нажатии
+  // озвучка при нажатии (английским голосом): слово — с левой плитки, описание — с правой (в режиме «Описание»)
   if(b.dataset.aud==='1') speakWord(+b.dataset.idx, b);     // аудио-плитка прослушивания — играет всегда + анимация
   else if(b.dataset.side==='L') speak(enOf(+b.dataset.idx));
+  else if(descActive() && b.dataset.side==='R') speak(descOf(+b.dataset.idx)); // «Описание»: произносим определение
   if(!g.sel){ g.sel=b; b.classList.add('sel'); return; }
   if(g.sel===b){ b.classList.remove('sel'); g.sel=null; return; }
   // если кликнули по той же стороне — просто переносим выбор, не считаем ошибкой
@@ -10067,7 +10077,7 @@ if ('serviceWorker' in navigator) {
    только APP_SUBVERSION (1 → 2…), крупные — APP_VERSION (92 → 93, а
    подверсию сбросить в 0 или 1). Сравнение идёт по APP_BUILD. */
 const APP_VERSION    = 93;   // основная версия (93 — разовый подъём: клиенты сборки «92» без подверсий видят только основную)
-const APP_SUBVERSION = 26;   // подверсия — 26: кнопка «Описание» независима от «Слова» (сама переключает набор; ровно одна из 4 кнопок активна)
+const APP_SUBVERSION = 28;   // подверсия — 28: узкие экраны — короткие подписи кнопок наборов (СЛОВ/ФРАЗ/ПАРЫ/ОПИС) вместо переполнения
 const APP_BUILD = APP_VERSION*100 + APP_SUBVERSION;               // 9201
 const APP_VERSION_LABEL = APP_VERSION + '.' + APP_SUBVERSION;     // «92.1» — подверсия всегда в шапке
 
